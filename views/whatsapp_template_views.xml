@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="whatsapp_template_view_form" model="ir.ui.view">
+        <field name="name">whatsapp.template.form</field>
+        <field name="model">whatsapp.template</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <field name="status" widget="statusbar" statusbar_visible="draft,pending,approved"/>
+                </header>
+                <sheet>
+                    <div class="oe_title">
+                        <label for="name" string="Nombre de la Plantilla"/>
+                        <h1><field name="name" placeholder="Ej: Recordatorio de Cuota"/></h1>
+                    </div>
+                    <group>
+                        <group string="Configuración en Meta">
+                            <field name="template_name" placeholder="Ej: recordatorio_cuota_motorgroup"/>
+                            <field name="wa_account_id" options="{'no_create': True}"/>
+                            <field name="category" widget="radio"/>
+                            <field name="lang_code" placeholder="es"/>
+                        </group>
+                        <group string="Asociación con Odoo">
+                            <field name="model_id" string="Aplica a" options="{'no_create': True}"/>
+                            <field name="model" invisible="1"/>
+                            <field name="header_type"/>
+                            <field name="header_text" invisible="header_type != 'text'"/>
+                            <field name="footer_text" placeholder="Ej: Motor Group TE — Financiamos tu camino"/>
+                        </group>
+                    </group>
+                    <notebook>
+                        <page string="Cuerpo del Mensaje" name="body_page">
+                            <div class="alert alert-info" role="alert">
+                                Usa marcadores <code>{{1}}</code>, <code>{{2}}</code>, etc. para valores dinámicos. En la pestaña «Mapeo de Variables» podrás vincular cada marcador con un campo de Odoo.
+                            </div>
+                            <field name="body" placeholder="Hola {{1}}, le recordamos que su cuota #{{2}} por ${{3}} vence el {{4}}..."/>
+                        </page>
+                        <page string="Mapeo de Variables" name="variables_page">
+                            <field name="variable_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" string="Marcador"/>
+                                    <field name="name" string="Descripción"/>
+                                    <field name="field_name" placeholder="Ej: partner_name, amount, due_date"/>
+                                </list>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+                <chatter/>
+            </form>
+        </field>
+    </record>
+
+    <record id="whatsapp_template_view_list" model="ir.ui.view">
+        <field name="name">whatsapp.template.list</field>
+        <field name="model">whatsapp.template</field>
+        <field name="arch" type="xml">
+            <list decoration-success="status == 'approved'"
+                  decoration-warning="status == 'pending'"
+                  decoration-danger="status == 'rejected'"
+                  decoration-muted="status == 'draft'">
+                <field name="name"/>
+                <field name="template_name"/>
+                <field name="model_id" string="Aplica a"/>
+                <field name="wa_account_id"/>
+                <field name="category" widget="badge"/>
+                <field name="lang_code"/>
+                <field name="status" widget="badge"
+                       decoration-success="status == 'approved'"
+                       decoration-warning="status == 'pending'"
+                       decoration-danger="status == 'rejected'"
+                       decoration-muted="status == 'draft'"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="whatsapp_template_action" model="ir.actions.act_window">
+        <field name="name">WhatsApp Templates</field>
+        <field name="res_model">whatsapp.template</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Crea o sincroniza tu primera plantilla de WhatsApp.
+            </p>
+            <p>
+                Las plantillas aprobadas por Meta se usan para envíos transaccionales y recordatorios de cobro proactivos.
+            </p>
+        </field>
+    </record>
+</odoo>

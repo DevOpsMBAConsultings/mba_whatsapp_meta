@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Menú Principal con Icono de App Drawer idéntico a Enterprise -->
+    <menuitem id="menu_whatsapp_root"
+              name="WhatsApp"
+              web_icon="mba_whatsapp_meta,static/description/icon.png"
+              sequence="120"
+              groups="group_whatsapp_user"/>
+
+    <!-- 1. Templates (Plantillas) -->
+    <menuitem id="menu_whatsapp_templates"
+              name="Templates"
+              parent="menu_whatsapp_root"
+              sequence="10"
+              action="whatsapp_template_action"
+              groups="group_whatsapp_user"/>
+
+    <!-- 2. Messages (Mensajes) -->
+    <menuitem id="menu_whatsapp_messages"
+              name="Messages"
+              parent="menu_whatsapp_root"
+              sequence="20"
+              action="whatsapp_message_action"
+              groups="group_whatsapp_user"/>
+
+    <!-- 3. Configuration (Configuración) -->
+    <menuitem id="menu_whatsapp_config"
+              name="Configuration"
+              parent="menu_whatsapp_root"
+              sequence="90"
+              groups="group_whatsapp_admin"/>
+
+    <menuitem id="menu_whatsapp_account"
+              name="WhatsApp Business Accounts"
+              parent="menu_whatsapp_config"
+              sequence="10"
+              action="whatsapp_account_action"/>
+
+    <menuitem id="menu_whatsapp_blocklist"
+              name="WhatsApp Blocklist"
+              parent="menu_whatsapp_config"
+              sequence="20"
+              action="whatsapp_blocklist_action"/>
+</odoo>

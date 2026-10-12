@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="whatsapp_message_view_form" model="ir.ui.view">
+        <field name="name">whatsapp.message.form</field>
+        <field name="model">whatsapp.message</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button name="action_retry" string="Reintentar Envío" type="object"
+                            class="btn-primary" invisible="state != 'error'"/>
+                    <field name="state" widget="statusbar" statusbar_visible="draft,sent,delivered,read"/>
+                </header>
+                <sheet>
+                    <group>
+                        <group string="Detalles del Envío">
+                            <field name="mobile_number" readonly="1"/>
+                            <field name="template_id" readonly="1"/>
+                            <field name="wa_account_id" readonly="1"/>
+                            <field name="msg_type" readonly="1"/>
+                            <field name="create_date" string="Fecha de Envío" readonly="1"/>
+                        </group>
+                        <group string="Trazabilidad Meta">
+                            <field name="msg_uid" readonly="1"/>
+                            <field name="model" readonly="1"/>
+                            <field name="res_id" readonly="1"/>
+                            <field name="company_id" groups="base.group_multi_company" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Error de Envío" invisible="not error_msg">
+                        <field name="error_msg" readonly="1" class="text-danger fw-bold"/>
+                    </group>
+                    <notebook>
+                        <page string="Contenido del Mensaje" name="body_page">
+                            <field name="body" readonly="1"/>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="whatsapp_message_view_list" model="ir.ui.view">
+        <field name="name">whatsapp.message.list</field>
+        <field name="model">whatsapp.message</field>
+        <field name="arch" type="xml">
+            <list decoration-success="state in ('sent', 'delivered', 'read')"
+                  decoration-danger="state == 'error'"
+                  decoration-muted="state == 'draft'">
+                <field name="create_date" string="Fecha"/>
+                <field name="mobile_number" string="Destinatario"/>
+                <field name="body"/>
+                <field name="template_id"/>
+                <field name="wa_account_id"/>
+                <field name="msg_type" widget="badge"/>
+                <field name="state" widget="badge"
+                       decoration-success="state in ('sent', 'delivered', 'read')"
+                       decoration-danger="state == 'error'"
+                       decoration-muted="state == 'draft'"/>
+                <field name="msg_uid" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="whatsapp_message_action" model="ir.actions.act_window">
+        <field name="name">WhatsApp Messages</field>
+        <field name="res_model">whatsapp.message</field>
+        <field name="view_mode">list,form</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                Historial de mensajes de WhatsApp enviados y recibidos.
+            </p>
+            <p>
+                Aquí podrás auditar el estado de entrega en tiempo real de cada mensaje despachado vía Meta Cloud API.
+            </p>
+        </field>
+    </record>
+</odoo>
