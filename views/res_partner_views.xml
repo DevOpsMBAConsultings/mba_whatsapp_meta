@@ -10,15 +10,15 @@
                 <button name="action_open_whatsapp_composer" type="object" class="oe_stat_button" icon="fa-whatsapp"
                         invisible="not phone">
                     <div class="o_stat_info">
-                        <span class="o_stat_text text-success font-weight-bold">WhatsApp</span>
+                        <span class="o_stat_text text-success fw-bold">WhatsApp</span>
                     </div>
                 </button>
             </xpath>
-            <!-- Icono verde de WhatsApp al lado del campo phone -->
+            <!-- Icono verde de WhatsApp junto al campo de teléfono -->
             <xpath expr="//field[@name='phone']" position="after">
                 <button name="action_open_whatsapp_composer" type="object"
-                        icon="fa-whatsapp" title="Enviar WhatsApp"
-                        class="btn btn-sm btn-link text-success p-0 ms-1 align-baseline"
+                        icon="fa-whatsapp" title="Enviar WhatsApp (Meta Cloud API)"
+                        class="btn btn-sm text-success p-0 ms-2 align-baseline border-0 bg-transparent o_whatsapp_phone_btn"
                         invisible="not phone"/>
             </xpath>
         </field>

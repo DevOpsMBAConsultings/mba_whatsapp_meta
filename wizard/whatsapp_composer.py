@@ -1,12 +1,11 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
-from urllib.parse import quote
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
 
 class WhatsappComposer(models.TransientModel):
     _name = "whatsapp.composer"
-    _description = "Asistente de Envío de WhatsApp"
+    _description = "Asistente de Envío de WhatsApp (Meta Cloud API)"
 
     partner_id = fields.Many2one("res.partner", string="Contacto", required=True)
     phone = fields.Char(string="Teléfono", required=True)
@@ -45,7 +44,7 @@ class WhatsappComposer(models.TransientModel):
         if msg.state != "error":
             self.partner_id.message_post(
                 body=_(
-                    "Mensaje de WhatsApp enviado vía Meta Cloud API (Plantilla: %s).<br/>ID: %s",
+                    "Mensaje de WhatsApp enviado vía Meta Cloud API (Plantilla: %s).<br/>ID Meta: %s",
                     self.template_id.name,
                     msg.msg_uid or "",
                 )
@@ -55,18 +54,10 @@ class WhatsappComposer(models.TransientModel):
                 "tag": "display_notification",
                 "params": {
                     "title": _("WhatsApp Enviado"),
-                    "message": _("Mensaje enviado con éxito a %s", self.phone),
+                    "message": _("Mensaje enviado con éxito vía Meta API a %s", self.phone),
                     "type": "success",
                     "sticky": False,
                 },
             }
         else:
             raise UserError(_("Error al enviar por Meta: %s", msg.error_msg))
-
-    def action_open_whatsapp_web(self):
-        """Abre WhatsApp Web directamente en el navegador."""
-        self.ensure_one()
-        clean = self.wa_account_id.clean_phone_number(self.phone) if self.wa_account_id else self.phone
-        text = self.body_preview or ""
-        url = f"https://wa.me/{clean}?text={quote(text)}"
-        return {"type": "ir.actions.act_url", "url": url, "target": "new"}

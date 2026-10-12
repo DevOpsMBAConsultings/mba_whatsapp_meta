@@ -19,6 +19,11 @@
         "views/res_partner_views.xml",
         "views/menus.xml",
     ],
+    "assets": {
+        "web.assets_backend": [
+            "mba_whatsapp_meta/static/src/scss/phone_icons.scss",
+        ],
+    },
     "installable": True,
     "application": True,
     "auto_install": False,

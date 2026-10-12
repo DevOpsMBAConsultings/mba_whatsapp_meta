@@ -1,0 +1,25 @@
+/* Hacer que los iconos de Llamar, SMS y WhatsApp sean siempre visibles y bien posicionados */
+body:not(.o_touch_device) .o_field_phone {
+    .o_phone_content {
+        width: auto !important;
+    }
+    input ~ a.o_phone_form_link,
+    a.o_phone_form_link {
+        display: inline-flex !important;
+        opacity: 0.85;
+        transition: opacity 0.2s ease-in-out;
+        &:hover {
+            opacity: 1;
+        }
+    }
+}
+
+.o_whatsapp_phone_btn {
+    font-size: 1.15rem !important;
+    vertical-align: middle !important;
+    cursor: pointer;
+    transition: transform 0.15s ease-in-out;
+    &:hover {
+        transform: scale(1.2);
+    }
+}

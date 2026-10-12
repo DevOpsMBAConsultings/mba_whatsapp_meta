@@ -4,7 +4,7 @@
         <field name="name">whatsapp.composer.form</field>
         <field name="model">whatsapp.composer</field>
         <field name="arch" type="xml">
-            <form string="Enviar Mensaje de WhatsApp">
+            <form string="Enviar Mensaje por Meta WhatsApp API">
                 <group>
                     <group>
                         <field name="partner_id" readonly="1"/>
@@ -12,15 +12,14 @@
                         <field name="wa_account_id" options="{'no_create': True}"/>
                     </group>
                     <group>
-                        <field name="template_id" options="{'no_create': True}" placeholder="Selecciona una plantilla..."/>
+                        <field name="template_id" options="{'no_create': True}" placeholder="Selecciona una plantilla de Meta..."/>
                     </group>
                 </group>
-                <group string="Vista Previa">
-                    <field name="body_preview" nolabel="1" readonly="1" placeholder="Selecciona una plantilla para previsualizar el mensaje..."/>
+                <group string="Vista Previa de la Plantilla">
+                    <field name="body_preview" nolabel="1" readonly="1" placeholder="Selecciona una plantilla para previsualizar el mensaje que se enviará por Meta Cloud API..."/>
                 </group>
                 <footer>
                     <button name="action_send_meta" string="Enviar por Meta WhatsApp" type="object" class="btn-primary" icon="fa-paper-plane" invisible="not template_id"/>
-                    <button name="action_open_whatsapp_web" string="Abrir en WhatsApp Web" type="object" class="btn-secondary" icon="fa-whatsapp"/>
                     <button string="Cancelar" special="cancel" class="btn-link"/>
                 </footer>
             </form>
