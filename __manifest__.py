@@ -12,6 +12,7 @@
         "security/security.xml",
         "security/ir.model.access.csv",
         "wizard/whatsapp_composer_views.xml",
+        "wizard/whatsapp_preview_views.xml",
         "views/whatsapp_message_views.xml",
         "views/whatsapp_template_views.xml",
         "views/whatsapp_blocklist_views.xml",

@@ -109,3 +109,30 @@ class TestWhatsappMeta(TransactionCase):
             "template_id": self.template.id,
         })
         self.assertIn("Cliente Prueba", composer.body_preview)
+
+    def test_template_buttons_and_preview(self):
+        """Verifica la creación de botones y la previsualización del mensaje."""
+        btn = self.env["whatsapp.template.button"].create({
+            "template_id": self.template.id,
+            "button_type": "url",
+            "name": "Ver Mi Cuenta",
+            "url_or_phone": "https://motorgroupte.com/portal",
+        })
+        self.assertEqual(btn.button_type, "url")
+        self.template._onchange_body()
+        preview = self.env["whatsapp.preview"].create({
+            "template_id": self.template.id,
+        })
+        self.assertTrue(bool(preview.rendered_body))
+
+    @patch("requests.post")
+    def test_submit_for_approval_success(self, mock_post):
+        """Simula envío de plantilla a Meta para aprobación."""
+        mock_res = MagicMock()
+        mock_res.status_code = 200
+        mock_res.json.return_value = {"id": "123456789", "status": "PENDING"}
+        mock_post.return_value = mock_res
+
+        action = self.template.action_submit_for_approval()
+        self.assertEqual(self.template.status, "pending")
+        self.assertEqual(action.get("type"), "ir.actions.client")

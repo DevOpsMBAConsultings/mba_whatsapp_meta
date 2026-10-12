@@ -1,6 +1,8 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
+import json
 import logging
 import re
+import requests
 
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
@@ -10,7 +12,7 @@ _logger = logging.getLogger(__name__)
 
 class WhatsappTemplate(models.Model):
     _name = "whatsapp.template"
-    _description = "Plantilla de WhatsApp (Meta)"
+    _description = "Plantilla de WhatsApp (Meta Cloud API)"
     _inherit = ["mail.thread"]
     _order = "name"
 
@@ -27,12 +29,30 @@ class WhatsappTemplate(models.Model):
     model_id = fields.Many2one("ir.model", string="Aplica a", help="Modelo de Odoo sobre el que se utiliza.")
     model = fields.Char(related="model_id.model", string="Nombre Técnico del Modelo", store=True)
 
-    lang_code = fields.Char(string="Idioma", default="es", required=True)
+    phone_field = fields.Char(string="Destinatario por Defecto", default="phone", help="Campo de teléfono en el modelo.")
+    user_scope = fields.Selection(
+        [
+            ("all", "Accessible to all Users"),
+            ("specific", "Specific Users"),
+        ],
+        string="Usuarios",
+        default="all",
+    )
+    variable_type = fields.Selection(
+        [
+            ("number", "number"),
+            ("text", "text"),
+        ],
+        string="Tipo de Variable",
+        default="number",
+    )
+
+    lang_code = fields.Char(string="Idioma", default="es_PA", required=True)
     category = fields.Selection(
         [
-            ("UTILITY", "Utilidad (Transaccional / Recordatorios)"),
-            ("MARKETING", "Marketing (Comercial / Promociones)"),
-            ("AUTHENTICATION", "Autenticación (OTP / Seguridad)"),
+            ("UTILITY", "Utility"),
+            ("MARKETING", "Marketing"),
+            ("AUTHENTICATION", "Authentication"),
         ],
         string="Categoría",
         default="UTILITY",
@@ -40,30 +60,144 @@ class WhatsappTemplate(models.Model):
     )
     status = fields.Selection(
         [
-            ("draft", "Borrador"),
-            ("pending", "En Revisión por Meta"),
-            ("approved", "Aprobada"),
-            ("rejected", "Rechazada"),
+            ("draft", "Draft"),
+            ("pending", "Pending"),
+            ("approved", "Approved"),
+            ("rejected", "Rejected"),
         ],
-        string="Estado en Meta",
+        string="Estado",
         default="draft",
         tracking=True,
     )
 
     header_type = fields.Selection(
         [
-            ("none", "Ninguno"),
-            ("text", "Texto"),
-            ("image", "Imagen"),
-            ("document", "Documento PDF"),
+            ("none", "None"),
+            ("text", "Text"),
+            ("image", "Image"),
+            ("document", "Document"),
+            ("video", "Video"),
         ],
-        string="Encabezado",
+        string="Tipo de Encabezado",
         default="none",
     )
     header_text = fields.Char(string="Texto del Encabezado")
     body = fields.Text(string="Cuerpo del Mensaje", help="Ej: Hola {{1}}, su cuota {{2}} por ${{3}} vence el {{4}}.")
     footer_text = fields.Char(string="Pie de Página")
     variable_ids = fields.One2many("whatsapp.template.variable", "template_id", string="Mapeo de Variables")
+    button_ids = fields.One2many("whatsapp.template.button", "template_id", string="Botones")
+
+    message_count = fields.Integer(string="Mensajes", compute="_compute_message_count")
+
+    def _compute_message_count(self):
+        for rec in self:
+            rec.message_count = self.env["whatsapp.message"].search_count([("template_id", "=", rec.id)])
+
+    def action_view_messages(self):
+        self.ensure_one()
+        return {
+            "name": f"Mensajes de {self.name}",
+            "type": "ir.actions.act_window",
+            "res_model": "whatsapp.message",
+            "view_mode": "list,form",
+            "domain": [("template_id", "=", self.id)],
+        }
+
+    def action_preview(self):
+        """Abre la previsualización del mensaje simulando WhatsApp."""
+        self.ensure_one()
+        return {
+            "name": f"Preview - {self.name}",
+            "type": "ir.actions.act_window",
+            "res_model": "whatsapp.preview",
+            "view_mode": "form",
+            "target": "new",
+            "context": {"default_template_id": self.id},
+        }
+
+    def action_submit_for_approval(self):
+        """Envía la plantilla a Meta Graph API para aprobación oficial."""
+        self.ensure_one()
+        account = self.wa_account_id
+        if not account or not account.token:
+            raise UserError(_("Debes configurar un Access Token válido en la cuenta de WhatsApp."))
+
+        components = []
+        if self.header_type == "text" and self.header_text:
+            components.append({
+                "type": "HEADER",
+                "format": "TEXT",
+                "text": self.header_text,
+            })
+
+        body_component = {
+            "type": "BODY",
+            "text": self.body or "",
+        }
+        if self.variable_ids:
+            samples = [v.sample_value or f"Ejemplo {v.sequence}" for v in self.variable_ids]
+            body_component["example"] = {
+                "body_text": [samples]
+            }
+        components.append(body_component)
+
+        if self.footer_text:
+            components.append({
+                "type": "FOOTER",
+                "text": self.footer_text,
+            })
+
+        if self.button_ids:
+            buttons = []
+            for b in self.button_ids:
+                if b.button_type == "quick_reply":
+                    buttons.append({"type": "QUICK_REPLY", "text": b.name})
+                elif b.button_type == "url":
+                    buttons.append({"type": "URL", "text": b.name, "url": b.url_or_phone or "https://mbaconsultings.com"})
+                elif b.button_type == "phone_number":
+                    buttons.append({"type": "PHONE_NUMBER", "text": b.name, "phone_number": b.url_or_phone or "+50700000000"})
+            if buttons:
+                components.append({
+                    "type": "BUTTONS",
+                    "buttons": buttons,
+                })
+
+        payload = {
+            "name": self.template_name,
+            "category": self.category,
+            "allow_category_change": True,
+            "language": self.lang_code or "es_PA",
+            "components": components,
+        }
+
+        url = f"https://graph.facebook.com/{account.api_version}/{account.account_uid}/message_templates"
+        headers = {
+            "Authorization": f"Bearer {account.token}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=20)
+            data = res.json() if res.content else {}
+        except Exception as e:
+            raise UserError(_("Error de conexión al enviar plantilla a Meta: %s", e))
+
+        if res.status_code in (200, 201):
+            new_status = data.get("status", "pending").lower()
+            self.write({"status": new_status})
+            return {
+                "type": "ir.actions.client",
+                "tag": "display_notification",
+                "params": {
+                    "title": _("Plantilla Enviada a Meta"),
+                    "message": _("La plantilla «%s» fue enviada exitosamente a Meta. Estado: %s", self.name, new_status.upper()),
+                    "type": "success",
+                    "sticky": False,
+                },
+            }
+        else:
+            err = data.get("error", {}).get("message", str(data))
+            raise UserError(_("Meta rechazó la creación de la plantilla: %s", err))
 
     @api.onchange("body")
     def _onchange_body(self):
@@ -78,19 +212,15 @@ class WhatsappTemplate(models.Model):
             if idx not in existing_indices:
                 new_vars.append((0, 0, {
                     "sequence": idx,
-                    "name": f"Variable {{{{{idx}}}}}",
+                    "name": f"Body - {{{{{idx}}}}}",
+                    "sample_value": f"Sample {idx}",
+                    "line_type": "field",
                 }))
         if new_vars:
             self.variable_ids = new_vars
 
     def send_to_phone(self, phone, record=None, custom_params=None):
-        """Envía un mensaje usando esta plantilla vía Meta WhatsApp Cloud API.
-
-        :param phone: Número de teléfono destinatario
-        :param record: Registro de Odoo origen (opcional)
-        :param custom_params: Lista de strings con los valores en orden [param1, param2, ...]
-        :return: Registro de whatsapp.message creado
-        """
+        """Envía un mensaje usando esta plantilla vía Meta WhatsApp Cloud API."""
         self.ensure_one()
         account = self.wa_account_id
         if not account or not account.active:
@@ -100,33 +230,31 @@ class WhatsappTemplate(models.Model):
         if not cleaned_phone:
             raise UserError(_("El número de teléfono proporcionado no es válido."))
 
-        # Verificación de lista negra
-        is_blocked = self.env["whatsapp.blocklist"].is_number_blocked(cleaned_phone)
-        if is_blocked:
+        if self.env["whatsapp.blocklist"].is_number_blocked(cleaned_phone):
             _logger.info("WhatsApp abortado: el número %s está en la lista negra.", cleaned_phone)
-            msg = self.env["whatsapp.message"].sudo().create({
+            return self.env["whatsapp.message"].sudo().create({
                 "wa_account_id": account.id,
                 "template_id": self.id,
                 "mobile_number": cleaned_phone,
-                "body": _("[OMITIDO] El número está en la lista negra."),
+                "body": self.body or "",
                 "state": "error",
-                "error_msg": _("Destinatario en lista negra."),
-                "model": record._name if record else False,
-                "res_id": record.id if record else False,
+                "error_msg": "Número en lista negra (opt-out previo).",
             })
-            return msg
 
-        # Resolver parámetros de la plantilla
+        # Construir parámetros
         parameters = []
-        if custom_params and isinstance(custom_params, (list, tuple)):
-            for val in custom_params:
-                parameters.append({"type": "text", "text": str(val or "")})
-        elif self.variable_ids and record:
-            for var in self.variable_ids.sorted(key=lambda v: v.sequence):
+        rendered_body = self.body or ""
+        if custom_params:
+            for idx, val in enumerate(custom_params, start=1):
+                val_str = str(val or "")
+                parameters.append({"type": "text", "text": val_str})
+                rendered_body = rendered_body.replace(f"{{{{{idx}}}}}", val_str)
+        elif record and self.variable_ids:
+            for var in self.variable_ids:
                 val = var.get_value_for_record(record)
-                parameters.append({"type": "text", "text": str(val or "")})
+                parameters.append({"type": "text", "text": val})
+                rendered_body = rendered_body.replace(f"{{{{{var.sequence}}}}}", val)
 
-        # Construir componentes del payload de Meta
         components = []
         if parameters:
             components.append({
@@ -141,42 +269,50 @@ class WhatsappTemplate(models.Model):
             "type": "template",
             "template": {
                 "name": self.template_name,
-                "language": {"code": self.lang_code or "es"},
+                "language": {"code": self.lang_code or "es_PA"},
             },
         }
         if components:
             payload["template"]["components"] = components
 
-        status_code, data = account.send_meta_raw(payload)
-
-        # Determinar resultado y registrar mensaje
-        rendered_body = self.body or self.name
-        for i, param in enumerate(parameters, start=1):
-            rendered_body = rendered_body.replace(f"{{{{{i}}}}}", param["text"])
+        url = f"https://graph.facebook.com/{account.api_version}/{account.phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {account.token}",
+            "Content-Type": "application/json",
+        }
 
         msg_vals = {
             "wa_account_id": account.id,
             "template_id": self.id,
             "mobile_number": cleaned_phone,
             "body": rendered_body,
-            "model": record._name if record else False,
-            "res_id": record.id if record else False,
-            "company_id": account.company_id.id,
+            "state": "outgoing",
         }
 
-        if status_code in (200, 201) and "messages" in data:
-            wamid = data["messages"][0]["id"]
+        try:
+            response = requests.post(url, headers=headers, json=payload, timeout=15)
+            status_code = response.status_code
+            data = response.json() if response.content else {}
+        except Exception as e:
+            _logger.error("Error de conexión con Meta Graph API: %s", e)
+            msg_vals.update({
+                "state": "error",
+                "error_msg": str(e),
+            })
+            return self.env["whatsapp.message"].sudo().create(msg_vals)
+
+        if status_code in (200, 201):
+            messages = data.get("messages", [])
+            wamid = messages[0].get("id") if messages else False
             msg_vals.update({
                 "state": "sent",
                 "msg_uid": wamid,
-                "error_msg": False,
             })
             msg = self.env["whatsapp.message"].sudo().create(msg_vals)
+            _logger.info("WhatsApp Meta enviado exitosamente a %s (ID: %s)", cleaned_phone, wamid)
             if record and hasattr(record, "message_post"):
                 record.message_post(
-                    body=_("Mensaje de WhatsApp («%s») enviado exitosamente a %s (ID Meta: %s).") % (
-                        self.name, cleaned_phone, wamid
-                    ),
+                    body=_("Mensaje de WhatsApp enviado («%s» a %s). ID: %s") % (self.name, cleaned_phone, wamid),
                     message_type="notification",
                 )
             return msg
@@ -196,6 +332,27 @@ class WhatsappTemplate(models.Model):
             return msg
 
 
+class WhatsappTemplateButton(models.Model):
+    _name = "whatsapp.template.button"
+    _description = "Botón de Plantilla WhatsApp"
+    _order = "sequence"
+
+    template_id = fields.Many2one("whatsapp.template", required=True, ondelete="cascade")
+    sequence = fields.Integer(string="Secuencia", default=10)
+    button_type = fields.Selection(
+        [
+            ("quick_reply", "Quick Reply"),
+            ("url", "Visit Website"),
+            ("phone_number", "Call Phone"),
+        ],
+        string="Tipo",
+        default="quick_reply",
+        required=True,
+    )
+    name = fields.Char(string="Texto del Botón", required=True)
+    url_or_phone = fields.Char(string="URL / Teléfono")
+
+
 class WhatsappTemplateVariable(models.Model):
     _name = "whatsapp.template.variable"
     _description = "Variable dinámica de Plantilla WhatsApp"
@@ -203,8 +360,21 @@ class WhatsappTemplateVariable(models.Model):
 
     template_id = fields.Many2one("whatsapp.template", required=True, ondelete="cascade")
     sequence = fields.Integer(string="Posición {{n}}", default=1, required=True)
-    name = fields.Char(string="Descripción", required=True)
-    field_name = fields.Char(string="Campo en el Modelo", help="Ej: partner_id.name, amount_total, due_date")
+    name = fields.Char(string="Name", required=True)
+    sample_value = fields.Char(string="Sample Value", default="Sample Value")
+    line_type = fields.Selection(
+        [
+            ("field", "Field of Model"),
+            ("user_name", "User Name"),
+            ("user_phone", "User Phone"),
+            ("free_text", "Free Text"),
+            ("portal_link", "Portal Link"),
+        ],
+        string="Type",
+        default="field",
+        required=True,
+    )
+    field_name = fields.Char(string="Field", help="Ej: partner_id.name, amount_total, due_date")
 
     def get_value_for_record(self, record):
         """Extrae el valor del registro siguiendo la ruta de campos punto a punto."""

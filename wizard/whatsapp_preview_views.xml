@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="whatsapp_preview_view_form" model="ir.ui.view">
+        <field name="name">whatsapp.preview.form</field>
+        <field name="model">whatsapp.preview</field>
+        <field name="arch" type="xml">
+            <form string="Vista Previa de WhatsApp">
+                <div class="p-3" style="background-color: #efeae2; border-radius: 8px; min-height: 220px;">
+                    <div class="shadow-sm p-3 mb-2" style="background-color: #ffffff; border-radius: 8px; max-width: 85%; margin-left: auto; border-top-right-radius: 0;">
+                        <field name="template_id" invisible="1"/>
+                        <h6 class="fw-bold mb-2 text-dark" invisible="not header_text"><field name="header_text" readonly="1"/></h6>
+                        <div class="text-dark mb-2" style="white-space: pre-wrap; font-size: 0.95rem;">
+                            <field name="rendered_body" readonly="1"/>
+                        </div>
+                        <small class="text-muted d-block mt-2 border-top pt-1" invisible="not footer_text"><field name="footer_text" readonly="1"/></small>
+                        <div class="text-end mt-1">
+                            <small class="text-muted" style="font-size: 0.75rem;">12:00 PM <i class="fa fa-check text-primary"></i></small>
+                        </div>
+                    </div>
+                </div>
+                <footer>
+                    <button string="Cerrar" special="cancel" class="btn-primary"/>
+                </footer>
+            </form>
+        </field>
+    </record>
+</odoo>

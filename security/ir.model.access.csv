@@ -5,8 +5,11 @@ access_whatsapp_template_user,whatsapp.template user,model_whatsapp_template,gro
 access_whatsapp_template_admin,whatsapp.template admin,model_whatsapp_template,group_whatsapp_admin,1,1,1,1
 access_whatsapp_template_variable_user,whatsapp.template.variable user,model_whatsapp_template_variable,group_whatsapp_user,1,0,0,0
 access_whatsapp_template_variable_admin,whatsapp.template.variable admin,model_whatsapp_template_variable,group_whatsapp_admin,1,1,1,1
+access_whatsapp_template_button_user,whatsapp.template.button user,model_whatsapp_template_button,group_whatsapp_user,1,0,0,0
+access_whatsapp_template_button_admin,whatsapp.template.button admin,model_whatsapp_template_button,group_whatsapp_admin,1,1,1,1
 access_whatsapp_message_user,whatsapp.message user,model_whatsapp_message,group_whatsapp_user,1,1,1,0
 access_whatsapp_message_admin,whatsapp.message admin,model_whatsapp_message,group_whatsapp_admin,1,1,1,1
 access_whatsapp_blocklist_user,whatsapp.blocklist user,model_whatsapp_blocklist,group_whatsapp_user,1,0,0,0
 access_whatsapp_blocklist_admin,whatsapp.blocklist admin,model_whatsapp_blocklist,group_whatsapp_admin,1,1,1,1
 access_whatsapp_composer_user,whatsapp.composer user,model_whatsapp_composer,base.group_user,1,1,1,1
+access_whatsapp_preview_user,whatsapp.preview user,model_whatsapp_preview,base.group_user,1,1,1,1

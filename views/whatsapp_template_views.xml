@@ -6,41 +6,63 @@
         <field name="arch" type="xml">
             <form>
                 <header>
+                    <button name="action_submit_for_approval" string="Submit for Approval" type="object" class="btn-primary" invisible="status in ('approved', 'pending')"/>
+                    <button name="action_preview" string="Preview" type="object" class="btn-secondary"/>
                     <field name="status" widget="statusbar" statusbar_visible="draft,pending,approved"/>
                 </header>
                 <sheet>
+                    <div class="oe_button_box" name="button_box">
+                        <button name="action_view_messages" type="object" class="oe_stat_button" icon="fa-whatsapp">
+                            <field name="message_count" widget="statinfo" string="Messages"/>
+                        </button>
+                    </div>
                     <div class="oe_title">
-                        <label for="name" string="Nombre de la Plantilla"/>
-                        <h1><field name="name" placeholder="Ej: Recordatorio de Cuota"/></h1>
+                        <label for="name" string="Name"/>
+                        <h1><field name="name" placeholder="e.g. Lead Follow-up"/></h1>
                     </div>
                     <group>
-                        <group string="Configuración en Meta">
-                            <field name="template_name" placeholder="Ej: recordatorio_cuota_motorgroup"/>
+                        <group>
                             <field name="wa_account_id" options="{'no_create': True}"/>
-                            <field name="category" widget="radio"/>
-                            <field name="lang_code" placeholder="es"/>
-                        </group>
-                        <group string="Asociación con Odoo">
-                            <field name="model_id" string="Aplica a" options="{'no_create': True}"/>
+                            <field name="model_id" string="Applies to" options="{'no_create': True}"/>
                             <field name="model" invisible="1"/>
+                            <field name="phone_field" placeholder="phone o mobile"/>
+                            <field name="category"/>
+                            <field name="user_scope"/>
+                            <field name="variable_type"/>
+                        </group>
+                        <group>
+                            <field name="template_name" placeholder="e.g. lead_follow_up"/>
+                            <field name="lang_code" placeholder="es_PA"/>
                             <field name="header_type"/>
                             <field name="header_text" invisible="header_type != 'text'"/>
-                            <field name="footer_text" placeholder="Ej: Motor Group TE — Financiamos tu camino"/>
+                            <field name="footer_text" placeholder="e.g. Motor Group TE"/>
                         </group>
                     </group>
                     <notebook>
-                        <page string="Cuerpo del Mensaje" name="body_page">
-                            <div class="alert alert-info" role="alert">
-                                Usa marcadores <code>{{1}}</code>, <code>{{2}}</code>, etc. para valores dinámicos. En la pestaña «Mapeo de Variables» podrás vincular cada marcador con un campo de Odoo.
+                        <page string="Body" name="body_page">
+                            <div class="alert alert-info py-2" role="alert">
+                                Usa marcadores <code>{{1}}</code>, <code>{{2}}</code>, etc. para variables dinámicas. Luego configúralos en la pestaña <strong>Variables</strong>.
                             </div>
-                            <field name="body" placeholder="Hola {{1}}, le recordamos que su cuota #{{2}} por ${{3}} vence el {{4}}..."/>
+                            <field name="body" placeholder="Hola {{1}}, gracias por contactar a Motor Group. Tu cotización {{2}} está lista..."/>
                         </page>
-                        <page string="Mapeo de Variables" name="variables_page">
+                        <page string="Buttons" name="buttons_page">
+                            <field name="button_ids">
+                                <list editable="bottom">
+                                    <field name="sequence" widget="handle"/>
+                                    <field name="button_type"/>
+                                    <field name="name" string="Button Text"/>
+                                    <field name="url_or_phone" string="URL / Phone" placeholder="https://... o +507..."/>
+                                </list>
+                            </field>
+                        </page>
+                        <page string="Variables" name="variables_page">
                             <field name="variable_ids">
                                 <list editable="bottom">
-                                    <field name="sequence" string="Marcador"/>
-                                    <field name="name" string="Descripción"/>
-                                    <field name="field_name" placeholder="Ej: partner_name, amount, due_date"/>
+                                    <field name="sequence" string="Marker {{n}}"/>
+                                    <field name="name" string="Name"/>
+                                    <field name="sample_value" string="Sample Value"/>
+                                    <field name="line_type" string="Type"/>
+                                    <field name="field_name" string="Field" placeholder="e.g. partner_id.name, amount_total"/>
                                 </list>
                             </field>
                         </page>
@@ -61,7 +83,7 @@
                   decoration-muted="status == 'draft'">
                 <field name="name"/>
                 <field name="template_name"/>
-                <field name="model_id" string="Aplica a"/>
+                <field name="model_id" string="Applies to"/>
                 <field name="wa_account_id"/>
                 <field name="category" widget="badge"/>
                 <field name="lang_code"/>
@@ -83,7 +105,7 @@
                 Crea o sincroniza tu primera plantilla de WhatsApp.
             </p>
             <p>
-                Las plantillas aprobadas por Meta se usan para envíos transaccionales y recordatorios de cobro proactivos.
+                Diseña plantillas, configúrales botones y variables, previsualízalas y envíalas directamente a aprobación oficial en Meta.
             </p>
         </field>
     </record>
