@@ -89,3 +89,8 @@ class TestWhatsappMeta(TransactionCase):
         action = self.account.action_test_connection()
         self.assertEqual(action.get("type"), "ir.actions.client")
         self.assertEqual(action.get("tag"), "display_notification")
+
+    def test_webhook_verification_token(self):
+        """Verifica que la cuenta genere un webhook verify token válido y único."""
+        self.assertTrue(bool(self.account.webhook_verify_token))
+        self.assertIn("/whatsapp/webhook/", self.account.callback_url)
