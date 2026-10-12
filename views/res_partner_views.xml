@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_partner_form_whatsapp" model="ir.ui.view">
+        <field name="name">res.partner.form.whatsapp</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base.view_partner_form"/>
+        <field name="arch" type="xml">
+            <!-- Smart Button en Button Box -->
+            <xpath expr="//div[@name='button_box']" position="inside">
+                <button name="action_open_whatsapp_composer" type="object" class="oe_stat_button" icon="fa-whatsapp"
+                        invisible="not phone">
+                    <div class="o_stat_info">
+                        <span class="o_stat_text text-success font-weight-bold">WhatsApp</span>
+                    </div>
+                </button>
+            </xpath>
+            <!-- Icono verde de WhatsApp al lado del campo phone -->
+            <xpath expr="//field[@name='phone']" position="after">
+                <button name="action_open_whatsapp_composer" type="object"
+                        icon="fa-whatsapp" title="Enviar WhatsApp"
+                        class="btn btn-sm btn-link text-success p-0 ms-1 align-baseline"
+                        invisible="not phone"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

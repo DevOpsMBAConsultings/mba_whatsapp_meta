@@ -9,3 +9,4 @@ access_whatsapp_message_user,whatsapp.message user,model_whatsapp_message,group_
 access_whatsapp_message_admin,whatsapp.message admin,model_whatsapp_message,group_whatsapp_admin,1,1,1,1
 access_whatsapp_blocklist_user,whatsapp.blocklist user,model_whatsapp_blocklist,group_whatsapp_user,1,0,0,0
 access_whatsapp_blocklist_admin,whatsapp.blocklist admin,model_whatsapp_blocklist,group_whatsapp_admin,1,1,1,1
+access_whatsapp_composer_user,whatsapp.composer user,model_whatsapp_composer,base.group_user,1,1,1,1

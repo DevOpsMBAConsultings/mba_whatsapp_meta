@@ -94,3 +94,18 @@ class TestWhatsappMeta(TransactionCase):
         """Verifica que la cuenta genere un webhook verify token válido y único."""
         self.assertTrue(bool(self.account.webhook_verify_token))
         self.assertIn("/whatsapp/webhook/", self.account.callback_url)
+
+    def test_composer_and_partner_action(self):
+        """Verifica que el contacto abra el wizard y genere la vista previa."""
+        partner = self.env["res.partner"].create({"name": "Cliente Prueba", "phone": "61234567"})
+        action = partner.action_open_whatsapp_composer()
+        self.assertEqual(action.get("res_model"), "whatsapp.composer")
+        self.assertEqual(action.get("target"), "new")
+
+        composer = self.env["whatsapp.composer"].create({
+            "partner_id": partner.id,
+            "phone": partner.phone,
+            "wa_account_id": self.account.id,
+            "template_id": self.template.id,
+        })
+        self.assertIn("Cliente Prueba", composer.body_preview)
