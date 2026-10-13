@@ -4,3 +4,4 @@ from . import whatsapp_template
 from . import whatsapp_message
 from . import whatsapp_blocklist
 from . import res_partner
+from . import discuss_channel

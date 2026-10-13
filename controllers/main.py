@@ -53,12 +53,27 @@ class WhatsAppWebhookController(http.Controller):
                         if msg:
                             msg.write({"state": st})
 
-                # Mensajes entrantes (detección de opt-out / STOP)
+                # Mensajes entrantes (procesamiento de respuestas y opt-out)
                 for incoming_msg in value.get("messages", []):
                     from_num = incoming_msg.get("from")
-                    text_body = incoming_msg.get("text", {}).get("body", "").strip().upper()
-                    if from_num and text_body in ("STOP", "BAJA", "ALTO", "CANCELAR"):
-                        clean_num = request.env["whatsapp.account"].clean_phone_number(from_num)
+                    msg_type = incoming_msg.get("type", "text")
+                    msg_uid = incoming_msg.get("id")
+                    if not from_num:
+                        continue
+
+                    clean_num = request.env["whatsapp.account"].clean_phone_number(from_num)
+
+                    if msg_type == "text":
+                        text_body = incoming_msg.get("text", {}).get("body", "").strip()
+                    elif msg_type == "image":
+                        text_body = incoming_msg.get("image", {}).get("caption", "").strip() or "[Imagen recibida por WhatsApp]"
+                    elif msg_type == "document":
+                        text_body = incoming_msg.get("document", {}).get("caption", "").strip() or "[Documento recibido por WhatsApp]"
+                    else:
+                        text_body = f"[{msg_type.capitalize()} recibido por WhatsApp]"
+
+                    # Detección de opt-out / STOP
+                    if text_body.upper() in ("STOP", "BAJA", "ALTO", "CANCELAR"):
                         Blocklist = request.env["whatsapp.blocklist"].sudo()
                         if not Blocklist.search([("mobile_number", "=", clean_num)], limit=1):
                             Blocklist.create({
@@ -66,6 +81,50 @@ class WhatsAppWebhookController(http.Controller):
                                 "reason": f"Opt-out recibido por webhook ({text_body})",
                             })
                             _logger.info("Número %s añadido a lista negra por petición expresa", clean_num)
+
+                    # Registrar en whatsapp.message si no existe ya
+                    MsgModel = request.env["whatsapp.message"].sudo()
+                    if not MsgModel.search([("msg_uid", "=", msg_uid)], limit=1):
+                        MsgModel.create({
+                            "wa_account_id": account.id,
+                            "mobile_number": clean_num,
+                            "body": text_body,
+                            "msg_type": "inbound",
+                            "state": "delivered",
+                            "msg_uid": msg_uid,
+                        })
+
+                    # Publicar en Conversaciones (discuss.channel)
+                    try:
+                        partner = account.find_partner_by_phone(clean_num)
+
+                        Channel = request.env["discuss.channel"].sudo()
+                        if not partner:
+                            # Si no existe partner, buscar si ya hay un canal con este número o crearlo
+                            channel = Channel.search([("whatsapp_number", "=", clean_num)], limit=1)
+                            if not channel:
+                                partner = request.env["res.partner"].sudo().create({
+                                    "name": f"WhatsApp +{clean_num}",
+                                    "phone": f"+{clean_num}",
+                                })
+                                channel = Channel._get_or_create_chat(partners_to=[partner.id], pin=True)
+                        else:
+                            channel = Channel._get_or_create_chat(partners_to=[partner.id], pin=True)
+
+                        channel.write({
+                            "whatsapp_number": clean_num,
+                            "whatsapp_partner_id": partner.id,
+                            "whatsapp_account_id": account.id,
+                        })
+                        channel.with_context(whatsapp_no_dispatch=True).message_post(
+                            body=text_body,
+                            author_id=partner.id,
+                            message_type="comment",
+                            subtype_xmlid="mail.mt_comment",
+                        )
+                        _logger.info("Mensaje entrante de WhatsApp publicado en Discuss (Canal %s, Partner %s)", channel.id, partner.name)
+                    except Exception as ex:
+                        _logger.error("Error al publicar mensaje entrante en Discuss: %s", ex)
 
         return request.make_response(
             json.dumps({"status": "success"}), headers=[("Content-Type", "application/json")]

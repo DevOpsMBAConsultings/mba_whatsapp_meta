@@ -85,6 +85,22 @@ class WhatsappAccount(models.Model):
             digits = digits[2:]
         return digits
 
+    @api.model
+    def find_partner_by_phone(self, phone):
+        """Busca un res.partner por número de teléfono de forma compatible entre versiones de Odoo."""
+        if not phone:
+            return self.env["res.partner"].browse()
+        clean = self.clean_phone_number(phone)
+        short_num = clean[-8:] if len(clean) >= 8 else clean
+        Partner = self.env["res.partner"].sudo()
+        if "phone_mobile_search" in Partner._fields:
+            domain = [("phone_mobile_search", "ilike", short_num)]
+        elif "mobile" in Partner._fields:
+            domain = ["|", ("mobile", "ilike", short_num), ("phone", "ilike", short_num)]
+        else:
+            domain = [("phone", "ilike", short_num)]
+        return Partner.search(domain, limit=1)
+
     def action_test_connection(self):
         """Prueba credenciales contra Meta Graph API."""
         self.ensure_one()
@@ -207,3 +223,62 @@ class WhatsappAccount(models.Model):
             "domain": [("wa_account_id", "=", self.id)],
             "context": {"default_wa_account_id": self.id},
         }
+
+    def send_text_to_phone(self, phone, text):
+        """Envía un mensaje de texto libre a través de Meta Graph API (ventana de 24h)."""
+        self.ensure_one()
+        clean_phone = self.clean_phone_number(phone)
+        if not clean_phone:
+            return {"error": {"message": "Número de teléfono no válido"}}
+
+        # Validar si está en lista negra
+        if self.env["whatsapp.blocklist"].sudo().search([("mobile_number", "=", clean_phone)], limit=1):
+            _logger.info("WhatsApp abortado: el número %s está en la lista negra.", clean_phone)
+            return {"error": {"message": "El número está en la lista negra (opt-out)"}}
+
+        url = f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}/messages"
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_phone,
+            "type": "text",
+            "text": {"preview_url": False, "body": text},
+        }
+
+        msg_vals = {
+            "wa_account_id": self.id,
+            "mobile_number": clean_phone,
+            "body": text,
+            "msg_type": "outbound",
+            "state": "outgoing",
+        }
+
+        try:
+            res = requests.post(url, headers=headers, json=payload, timeout=15)
+            data = res.json() if res.content else {}
+            status_code = res.status_code
+        except Exception as e:
+            _logger.error("Error al conectar con Meta Graph API: %s", e)
+            msg_vals.update({"state": "error", "error_msg": str(e)})
+            self.env["whatsapp.message"].sudo().create(msg_vals)
+            return {"error": {"message": str(e)}}
+
+        if status_code in (200, 201):
+            messages = data.get("messages", [])
+            wamid = messages[0].get("id") if messages else False
+            msg_vals.update({"state": "sent", "msg_uid": wamid})
+            msg = self.env["whatsapp.message"].sudo().create(msg_vals)
+            _logger.info("WhatsApp texto libre enviado con éxito a %s (ID: %s)", clean_phone, wamid)
+            return {"success": True, "wamid": wamid, "message_id": msg.id}
+        else:
+            err_data = data.get("error", {})
+            err_msg = err_data.get("message", str(data))
+            msg_vals.update({"state": "error", "error_msg": f"HTTP {status_code}: {err_msg}"})
+            self.env["whatsapp.message"].sudo().create(msg_vals)
+            _logger.warning("Fallo al enviar texto libre a %s: %s", clean_phone, err_msg)
+            return {"error": err_data or {"message": err_msg}}
+

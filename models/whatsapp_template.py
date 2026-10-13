@@ -346,6 +346,34 @@ class WhatsappTemplate(models.Model):
                     body=_("Mensaje de WhatsApp enviado («%s» a %s). ID: %s") % (self.name, cleaned_phone, wamid),
                     message_type="notification",
                 )
+
+            # Publicar en el módulo de Conversaciones (discuss.channel)
+            partner = False
+            if record:
+                if record._name == "res.partner":
+                    partner = record
+                elif hasattr(record, "partner_id") and record.partner_id:
+                    partner = record.partner_id
+            if not partner:
+                partner = account.find_partner_by_phone(cleaned_phone)
+
+            if partner:
+                try:
+                    Channel = self.env["discuss.channel"].sudo()
+                    channel = Channel._get_or_create_chat(partners_to=[partner.id], pin=True)
+                    channel.write({
+                        "whatsapp_number": cleaned_phone,
+                        "whatsapp_partner_id": partner.id,
+                        "whatsapp_account_id": account.id,
+                    })
+                    channel.with_context(whatsapp_no_dispatch=True).message_post(
+                        body=rendered_body,
+                        message_type="comment",
+                        subtype_xmlid="mail.mt_comment",
+                    )
+                except Exception as ex:
+                    _logger.warning("No se pudo publicar WhatsApp en Conversaciones: %s", ex)
+
             return msg
         else:
             err_msg = data.get("error", {}).get("message", str(data))

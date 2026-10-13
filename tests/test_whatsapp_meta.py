@@ -163,4 +163,64 @@ class TestWhatsappMeta(TransactionCase):
         self.assertIn("{{2}}", new_template.body)
         self.assertEqual(len(new_template.variable_ids), 2)
 
+    @patch("requests.post")
+    def test_send_template_syncs_to_discuss_channel(self, mock_post):
+        """Verifica que enviar una plantilla cree el chat en Conversaciones y publique el mensaje."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "messaging_product": "whatsapp",
+            "messages": [{"id": "wamid.TEST_DISCUSS_123"}],
+        }
+        mock_post.return_value = mock_response
+
+        partner = self.env["res.partner"].create({
+            "name": "Cliente Conversacion",
+            "phone": "68889900",
+        })
+
+        self.template.send_to_phone(
+            phone="68889900",
+            custom_params=["Cliente Conversacion", "1", "50.00", "01/11/2026"],
+            record=partner,
+        )
+
+        channel = self.env["discuss.channel"].search([("whatsapp_number", "=", "50768889900")], limit=1)
+        self.assertTrue(bool(channel))
+        self.assertEqual(channel.whatsapp_partner_id, partner)
+        self.assertEqual(channel.whatsapp_account_id, self.account)
+        last_msg = channel.message_ids.sorted("id", reverse=True)[0]
+        self.assertIn("Cliente Conversacion", last_msg.body)
+
+    @patch("requests.post")
+    def test_discuss_channel_outgoing_text(self, mock_post):
+        """Verifica que al escribir en el chat de Conversaciones se despache el texto libre a Meta."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "messaging_product": "whatsapp",
+            "messages": [{"id": "wamid.REPLY_META_456"}],
+        }
+        mock_post.return_value = mock_response
+
+        partner = self.env["res.partner"].create({
+            "name": "Cliente Chat",
+            "phone": "67778899",
+        })
+        channel = self.env["discuss.channel"]._get_or_create_chat(partners_to=[partner.id], pin=True)
+        channel.write({
+            "whatsapp_number": "50767778899",
+            "whatsapp_partner_id": partner.id,
+            "whatsapp_account_id": self.account.id,
+        })
+
+        # Usuario interno escribe en el canal
+        msg = channel.message_post(body="Hola cliente, recibimos su pago.", message_type="comment")
+        self.assertTrue(mock_post.called)
+        # Se creó el registro en whatsapp.message
+        wa_msg = self.env["whatsapp.message"].search([("msg_uid", "=", "wamid.REPLY_META_456")], limit=1)
+        self.assertTrue(bool(wa_msg))
+        self.assertEqual(wa_msg.mobile_number, "50767778899")
+        self.assertEqual(wa_msg.body, "Hola cliente, recibimos su pago.")
+
 
