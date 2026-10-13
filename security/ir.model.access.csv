@@ -1,10 +1,13 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_whatsapp_account_user,whatsapp.account user,model_whatsapp_account,group_whatsapp_user,1,0,0,0
 access_whatsapp_account_admin,whatsapp.account admin,model_whatsapp_account,group_whatsapp_admin,1,1,1,1
+access_whatsapp_template_internal,whatsapp.template internal,model_whatsapp_template,base.group_user,1,0,0,0
 access_whatsapp_template_user,whatsapp.template user,model_whatsapp_template,group_whatsapp_user,1,0,0,0
 access_whatsapp_template_admin,whatsapp.template admin,model_whatsapp_template,group_whatsapp_admin,1,1,1,1
+access_whatsapp_template_variable_internal,whatsapp.template.variable internal,model_whatsapp_template_variable,base.group_user,1,0,0,0
 access_whatsapp_template_variable_user,whatsapp.template.variable user,model_whatsapp_template_variable,group_whatsapp_user,1,0,0,0
 access_whatsapp_template_variable_admin,whatsapp.template.variable admin,model_whatsapp_template_variable,group_whatsapp_admin,1,1,1,1
+access_whatsapp_template_button_internal,whatsapp.template.button internal,model_whatsapp_template_button,base.group_user,1,0,0,0
 access_whatsapp_template_button_user,whatsapp.template.button user,model_whatsapp_template_button,group_whatsapp_user,1,0,0,0
 access_whatsapp_template_button_admin,whatsapp.template.button admin,model_whatsapp_template_button,group_whatsapp_admin,1,1,1,1
 access_whatsapp_message_user,whatsapp.message user,model_whatsapp_message,group_whatsapp_user,1,1,1,0

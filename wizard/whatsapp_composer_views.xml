@@ -5,9 +5,11 @@
         <field name="model">whatsapp.composer</field>
         <field name="arch" type="xml">
             <form string="Enviar Mensaje por Meta WhatsApp API">
+                <field name="res_model" invisible="1"/>
+                <field name="res_id" invisible="1"/>
                 <group>
                     <group>
-                        <field name="partner_id" readonly="1"/>
+                        <field name="partner_id" readonly="1" invisible="not partner_id"/>
                         <field name="phone"/>
                         <field name="wa_account_id" options="{'no_create': True}"/>
                     </group>
