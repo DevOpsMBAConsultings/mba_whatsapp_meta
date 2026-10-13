@@ -1,4 +1,5 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_whatsapp_account_internal,whatsapp.account internal,model_whatsapp_account,base.group_user,1,0,0,0
 access_whatsapp_account_user,whatsapp.account user,model_whatsapp_account,group_whatsapp_user,1,0,0,0
 access_whatsapp_account_admin,whatsapp.account admin,model_whatsapp_account,group_whatsapp_admin,1,1,1,1
 access_whatsapp_template_internal,whatsapp.template internal,model_whatsapp_template,base.group_user,1,0,0,0
@@ -12,6 +13,7 @@ access_whatsapp_template_button_user,whatsapp.template.button user,model_whatsap
 access_whatsapp_template_button_admin,whatsapp.template.button admin,model_whatsapp_template_button,group_whatsapp_admin,1,1,1,1
 access_whatsapp_message_user,whatsapp.message user,model_whatsapp_message,group_whatsapp_user,1,1,1,0
 access_whatsapp_message_admin,whatsapp.message admin,model_whatsapp_message,group_whatsapp_admin,1,1,1,1
+access_whatsapp_blocklist_internal,whatsapp.blocklist internal,model_whatsapp_blocklist,base.group_user,1,0,0,0
 access_whatsapp_blocklist_user,whatsapp.blocklist user,model_whatsapp_blocklist,group_whatsapp_user,1,0,0,0
 access_whatsapp_blocklist_admin,whatsapp.blocklist admin,model_whatsapp_blocklist,group_whatsapp_admin,1,1,1,1
 access_whatsapp_composer_user,whatsapp.composer user,model_whatsapp_composer,base.group_user,1,1,1,1

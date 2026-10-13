@@ -261,7 +261,7 @@ class WhatsappTemplate(models.Model):
         if not cleaned_phone:
             raise UserError(_("El número de teléfono proporcionado no es válido."))
 
-        if self.env["whatsapp.blocklist"].is_number_blocked(cleaned_phone):
+        if self.env["whatsapp.blocklist"].sudo().is_number_blocked(cleaned_phone):
             _logger.info("WhatsApp abortado: el número %s está en la lista negra.", cleaned_phone)
             return self.env["whatsapp.message"].sudo().create({
                 "wa_account_id": account.id,
