@@ -56,13 +56,14 @@
                             </field>
                         </page>
                         <page string="Variables" name="variables_page">
-                            <field name="variable_ids">
+                            <field name="variable_ids" context="{'default_model': model}">
                                 <list editable="bottom">
-                                    <field name="sequence" string="Marker {{n}}"/>
-                                    <field name="name" string="Name"/>
+                                    <field name="sequence" column_invisible="True"/>
+                                    <field name="name" string="Name" placeholder="{{1}}"/>
                                     <field name="sample_value" string="Sample Value"/>
                                     <field name="line_type" string="Type"/>
-                                    <field name="field_name" string="Field" placeholder="e.g. partner_id.name, amount_total"/>
+                                    <field name="model" column_invisible="True"/>
+                                    <field name="field_name" string="Field" widget="field_selector" options="{'model': 'model'}" invisible="line_type != 'field'"/>
                                 </list>
                             </field>
                         </page>

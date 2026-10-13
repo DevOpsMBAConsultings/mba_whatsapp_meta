@@ -136,3 +136,14 @@ class TestWhatsappMeta(TransactionCase):
         action = self.template.action_submit_for_approval()
         self.assertEqual(self.template.status, "pending")
         self.assertEqual(action.get("type"), "ir.actions.client")
+
+    def test_variable_name_formatting_and_model(self):
+        """Verifica que escribir '1' se convierta a '{{1}}' y que se propague el modelo."""
+        var = self.env["whatsapp.template.variable"].new({
+            "name": "1",
+            "template_id": self.template.id,
+        })
+        var._onchange_name()
+        self.assertEqual(var.name, "{{1}}")
+        self.assertEqual(var.sequence, 1)
+

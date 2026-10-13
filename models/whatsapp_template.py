@@ -199,6 +199,13 @@ class WhatsappTemplate(models.Model):
             err = data.get("error", {}).get("message", str(data))
             raise UserError(_("Meta rechazó la creación de la plantilla: %s", err))
 
+    @api.onchange("model_id")
+    def _onchange_model_id(self):
+        """Propaga el modelo a todas las variables asociadas."""
+        if self.model_id and self.variable_ids:
+            for var in self.variable_ids:
+                var.model = self.model_id.model
+
     @api.onchange("body")
     def _onchange_body(self):
         """Detecta automáticamente los placeholders {{1}}, {{2}}... en el cuerpo."""
@@ -212,9 +219,10 @@ class WhatsappTemplate(models.Model):
             if idx not in existing_indices:
                 new_vars.append((0, 0, {
                     "sequence": idx,
-                    "name": f"Body - {{{{{idx}}}}}",
+                    "name": f"{{{{{idx}}}}}",
                     "sample_value": f"Sample {idx}",
                     "line_type": "field",
+                    "model": self.model or "",
                 }))
         if new_vars:
             self.variable_ids = new_vars
@@ -358,9 +366,10 @@ class WhatsappTemplateVariable(models.Model):
     _description = "Variable dinámica de Plantilla WhatsApp"
     _order = "sequence"
 
-    template_id = fields.Many2one("whatsapp.template", required=True, ondelete="cascade")
-    sequence = fields.Integer(string="Posición {{n}}", default=1, required=True)
-    name = fields.Char(string="Name", required=True)
+    template_id = fields.Many2one("whatsapp.template", ondelete="cascade")
+    sequence = fields.Integer(string="Posición", default=1)
+    name = fields.Char(string="Name", default="{{1}}", required=True)
+    model = fields.Char(string="Model", compute="_compute_model", store=True, readonly=False)
     sample_value = fields.Char(string="Sample Value", default="Sample Value")
     line_type = fields.Selection(
         [
@@ -375,6 +384,22 @@ class WhatsappTemplateVariable(models.Model):
         required=True,
     )
     field_name = fields.Char(string="Field", help="Ej: partner_id.name, amount_total, due_date")
+
+    @api.depends("template_id.model")
+    def _compute_model(self):
+        for rec in self:
+            rec.model = rec.template_id.model or self.env.context.get("default_model") or ""
+
+    @api.onchange("name")
+    def _onchange_name(self):
+        """Si el usuario escribe '1', lo formatea a '{{1}}' y sincroniza la secuencia."""
+        if self.name:
+            clean = self.name.strip()
+            if clean.isdigit():
+                self.name = f"{{{{{clean}}}}}"
+            match = re.search(r"\d+", self.name)
+            if match:
+                self.sequence = int(match.group(0))
 
     def get_value_for_record(self, record):
         """Extrae el valor del registro siguiendo la ruta de campos punto a punto."""
