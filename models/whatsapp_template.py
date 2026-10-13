@@ -227,6 +227,29 @@ class WhatsappTemplate(models.Model):
         if new_vars:
             self.variable_ids = new_vars
 
+    def action_add_variable(self):
+        """Inserta automáticamente la siguiente variable {{n}} en el cuerpo y crea su registro."""
+        self.ensure_one()
+        matches = [int(x) for x in re.findall(r"\{\{(\d+)\}\}", self.body or "")]
+        next_seq = max(matches, default=0) + 1
+        var_marker = f"{{{{{next_seq}}}}}"
+
+        current_body = (self.body or "").strip()
+        new_body = f"{current_body} {var_marker}" if current_body else var_marker
+
+        existing_seqs = {v.sequence for v in self.variable_ids}
+        vals = {"body": new_body}
+        if next_seq not in existing_seqs:
+            vals["variable_ids"] = [(0, 0, {
+                "sequence": next_seq,
+                "name": var_marker,
+                "sample_value": f"Sample {next_seq}",
+                "line_type": "field",
+                "model": self.model or "",
+            })]
+        self.write(vals)
+        return True
+
     def send_to_phone(self, phone, record=None, custom_params=None):
         """Envía un mensaje usando esta plantilla vía Meta WhatsApp Cloud API."""
         self.ensure_one()

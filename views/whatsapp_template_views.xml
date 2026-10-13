@@ -40,8 +40,8 @@
                     </group>
                     <notebook>
                         <page string="Body" name="body_page">
-                            <div class="alert alert-info py-2" role="alert">
-                                Usa marcadores <code>{{1}}</code>, <code>{{2}}</code>, etc. para variables dinámicas. Luego configúralos en la pestaña <strong>Variables</strong>.
+                            <div class="d-flex justify-content-end mb-1">
+                                <button name="action_add_variable" type="object" string="+ variable" class="btn btn-link btn-sm text-decoration-none text-muted p-0"/>
                             </div>
                             <field name="body" placeholder="Hola {{1}}, gracias por contactar a Motor Group. Tu cotización {{2}} está lista..."/>
                         </page>

@@ -147,3 +147,20 @@ class TestWhatsappMeta(TransactionCase):
         self.assertEqual(var.name, "{{1}}")
         self.assertEqual(var.sequence, 1)
 
+    def test_action_add_variable(self):
+        """Verifica que al hacer clic en '+ variable' se inserte el siguiente {{n}} correlativo."""
+        new_template = self.env["whatsapp.template"].create({
+            "name": "Template Test Var",
+            "template_name": "template_test_var",
+            "wa_account_id": self.account.id,
+            "body": "Hola",
+        })
+        new_template.action_add_variable()
+        self.assertIn("{{1}}", new_template.body)
+        self.assertEqual(len(new_template.variable_ids), 1)
+
+        new_template.action_add_variable()
+        self.assertIn("{{2}}", new_template.body)
+        self.assertEqual(len(new_template.variable_ids), 2)
+
+
