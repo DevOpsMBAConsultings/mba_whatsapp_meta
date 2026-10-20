@@ -8,15 +8,21 @@
                 <header>
                     <button name="action_retry" string="Reintentar Envío" type="object"
                             class="btn-primary" invisible="state != 'error'"/>
+                    <button name="action_retry_media_download" string="Reintentar Descarga de Archivo" type="object"
+                            class="btn-secondary" invisible="media_status not in ('failed', 'pending') or not media_id"/>
+                    <button name="action_open_chat" string="Ver en Conversaciones" type="object"
+                            icon="fa-comments" class="btn-secondary" invisible="not mobile_number"/>
                     <field name="state" widget="statusbar" statusbar_visible="draft,sent,delivered,read"/>
                 </header>
                 <sheet>
                     <group>
                         <group string="Detalles del Envío">
+                            <field name="partner_id" readonly="1"/>
                             <field name="mobile_number" readonly="1"/>
                             <field name="template_id" readonly="1"/>
                             <field name="wa_account_id" readonly="1"/>
                             <field name="msg_type" readonly="1"/>
+                            <field name="cost_usd" widget="monetary" options="{'currency_field': 'currency_id'}" readonly="1"/>
                             <field name="create_date" string="Fecha de Envío" readonly="1"/>
                         </group>
                         <group string="Trazabilidad Meta">
@@ -26,10 +32,36 @@
                             <field name="company_id" groups="base.group_multi_company" readonly="1"/>
                         </group>
                     </group>
+                    <group string="Archivos Multimedia y Comprobantes" invisible="media_type == 'none'">
+                        <group>
+                            <field name="media_type" readonly="1"/>
+                            <field name="media_status" widget="badge"
+                                   decoration-success="media_status == 'downloaded'"
+                                   decoration-warning="media_status == 'pending'"
+                                   decoration-danger="media_status == 'failed'"/>
+                        </group>
+                        <group>
+                            <field name="media_id" readonly="1"/>
+                            <field name="attachment_id" readonly="1"/>
+                        </group>
+                    </group>
+                    <group string="Error de Descarga Multimedia" invisible="not media_error">
+                        <field name="media_error" readonly="1" class="text-danger"/>
+                    </group>
                     <group string="Error de Envío" invisible="not error_msg">
-                        <field name="error_msg" readonly="1" class="text-danger fw-bold"/>
+                        <field name="error_msg" readonly="1" class="text-danger"/>
                     </group>
                     <notebook>
+                        <page string="Comprobante / Archivo" name="preview_page" invisible="not attachment_id">
+                            <field name="attachment_name" invisible="1"/>
+                            <div invisible="media_type != 'image'" class="d-flex justify-content-center py-2">
+                                <field name="attachment_data" widget="image" class="img-fluid"
+                                       style="max-height: 650px; max-width: 100%; object-fit: contain;"/>
+                            </div>
+                            <div invisible="media_type != 'document'">
+                                <field name="attachment_data" widget="pdf_viewer" filename="attachment_name"/>
+                            </div>
+                        </page>
                         <page string="Contenido del Mensaje" name="body_page">
                             <field name="body" readonly="1"/>
                         </page>
@@ -43,15 +75,23 @@
         <field name="name">whatsapp.message.list</field>
         <field name="model">whatsapp.message</field>
         <field name="arch" type="xml">
-            <list decoration-success="state in ('sent', 'delivered', 'read')"
-                  decoration-danger="state == 'error'"
+            <list decoration-danger="state == 'error'"
                   decoration-muted="state == 'draft'">
                 <field name="create_date" string="Fecha"/>
+                <field name="attachment_data" widget="image" string="Preview" optional="show" options="{'size': [36, 36]}"/>
+                <field name="partner_id" optional="show"/>
                 <field name="mobile_number" string="Destinatario"/>
                 <field name="body"/>
                 <field name="template_id"/>
                 <field name="wa_account_id"/>
-                <field name="msg_type" widget="badge"/>
+                <field name="media_type" optional="show"/>
+                <field name="media_status" widget="badge" optional="show"
+                       decoration-success="media_status == 'downloaded'"
+                       decoration-warning="media_status == 'pending'"
+                       decoration-danger="media_status == 'failed'"/>
+                <field name="attachment_id" optional="show"/>
+                <field name="cost_usd" optional="show" widget="monetary" options="{'currency_field': 'currency_id'}"/>
+                <field name="msg_type"/>
                 <field name="state" widget="badge"
                        decoration-success="state in ('sent', 'delivered', 'read')"
                        decoration-danger="state == 'error'"
@@ -61,16 +101,60 @@
         </field>
     </record>
 
+    <record id="whatsapp_message_view_search" model="ir.ui.view">
+        <field name="name">whatsapp.message.search</field>
+        <field name="model">whatsapp.message</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="partner_id"/>
+                <field name="mobile_number"/>
+                <field name="body"/>
+                <field name="msg_uid"/>
+                <filter string="Entrantes" name="inbound" domain="[('msg_type', '=', 'inbound')]"/>
+                <filter string="Salientes" name="outbound" domain="[('msg_type', '=', 'outbound')]"/>
+                <separator/>
+                <filter string="Con Archivo / Comprobante" name="with_media" domain="[('media_type', '!=', 'none')]"/>
+                <filter string="Descargas Fallidas" name="failed_media" domain="[('media_status', '=', 'failed')]"/>
+                <filter string="Descargas Pendientes" name="pending_media" domain="[('media_status', '=', 'pending')]"/>
+                <filter string="Descargas Exitosas" name="downloaded_media" domain="[('media_status', '=', 'downloaded')]"/>
+                <group>
+                    <filter string="Contacto" name="group_partner" context="{'group_by': 'partner_id'}"/>
+                    <filter string="Estado" name="group_state" context="{'group_by': 'state'}"/>
+                    <filter string="Estado Multimedia" name="group_media_status" context="{'group_by': 'media_status'}"/>
+                    <filter string="Cuenta" name="group_account" context="{'group_by': 'wa_account_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
     <record id="whatsapp_message_action" model="ir.actions.act_window">
         <field name="name">WhatsApp Messages</field>
         <field name="res_model">whatsapp.message</field>
         <field name="view_mode">list,form</field>
+        <field name="search_view_id" ref="whatsapp_message_view_search"/>
         <field name="help" type="html">
             <p class="o_view_nocontent_smiling_face">
                 Historial de mensajes de WhatsApp enviados y recibidos.
             </p>
             <p>
                 Aquí podrás auditar el estado de entrega en tiempo real de cada mensaje despachado vía Meta Cloud API.
+            </p>
+        </field>
+    </record>
+
+    <record id="whatsapp_proof_action" model="ir.actions.act_window">
+        <field name="name">Comprobantes y Archivos WhatsApp</field>
+        <field name="res_model">whatsapp.message</field>
+        <field name="view_mode">list,form</field>
+        <field name="domain">[('media_type', '!=', 'none')]</field>
+        <field name="context">{'search_default_inbound': 1}</field>
+        <field name="search_view_id" ref="whatsapp_message_view_search"/>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">
+                No hay comprobantes o archivos multimedia recibidos por WhatsApp.
+            </p>
+            <p>
+                Los comprobantes de pago e imágenes enviados por los clientes aparecerán listados aquí para control y auditoría.
             </p>
         </field>
     </record>

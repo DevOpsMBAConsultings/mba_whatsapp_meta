@@ -223,4 +223,90 @@ class TestWhatsappMeta(TransactionCase):
         self.assertEqual(wa_msg.mobile_number, "50767778899")
         self.assertEqual(wa_msg.body, "Hola cliente, recibimos su pago.")
 
+    @patch("requests.get")
+    def test_download_media_success(self, mock_get):
+        """Simula la descarga de una imagen multimedia de Meta Graph API."""
+        # Paso 1: mock de consulta de metadata
+        mock_res1 = MagicMock()
+        mock_res1.status_code = 200
+        mock_res1.json.return_value = {"url": "https://cdn.whatsapp.com/test.jpg", "mime_type": "image/jpeg"}
+        # Paso 2: mock de descarga de bytes CDN
+        mock_res2 = MagicMock()
+        mock_res2.status_code = 200
+        mock_res2.content = b"FAKE_IMAGE_BYTES"
+        mock_get.side_effect = [mock_res1, mock_res2]
+
+        raw_bytes, mime = self.account.download_media("MEDIA_ID_123")
+        self.assertEqual(raw_bytes, b"FAKE_IMAGE_BYTES")
+        self.assertEqual(mime, "image/jpeg")
+
+    @patch("requests.get")
+    def test_retry_media_download_success(self, mock_get):
+        """Verifica que el botón de reintento descargue la imagen y cree el canal 1-a-1 sin UserError."""
+        mock_res1 = MagicMock()
+        mock_res1.status_code = 200
+        mock_res1.json.return_value = {"url": "https://cdn.whatsapp.com/test.jpg", "mime_type": "image/jpeg"}
+        mock_res2 = MagicMock()
+        mock_res2.status_code = 200
+        mock_res2.content = b"RECOVERED_IMAGE_BYTES"
+        mock_get.side_effect = [mock_res1, mock_res2]
+
+        partner = self.env["res.partner"].create({
+            "name": "Cliente Reintento",
+            "phone": "+50767082995",
+        })
+        msg = self.env["whatsapp.message"].create({
+            "wa_account_id": self.account.id,
+            "mobile_number": "50767082995",
+            "partner_id": partner.id,
+            "body": "📷 Foto de comprobante",
+            "msg_type": "inbound",
+            "state": "delivered",
+            "msg_uid": "wamid.TEST_RETRY_123",
+            "media_id": "MEDIA_ID_RETRY",
+            "media_type": "image",
+            "media_status": "failed",
+            "media_error": "Connection timeout",
+        })
+
+        res = msg.action_retry_media_download()
+        self.assertTrue(res)
+        self.assertEqual(msg.media_status, "downloaded")
+        self.assertFalse(msg.media_error)
+        self.assertTrue(bool(msg.attachment_id))
+
+        # Verificar que el canal creado sea estrictamente de 2 personas
+        channel = self.env["discuss.channel"].search([("whatsapp_number", "=", "50767082995")], limit=1)
+        self.assertTrue(bool(channel))
+        self.assertEqual(len(channel.channel_member_ids), 2)
+
+    @patch("requests.get")
+    def test_cron_retry_failed_media_downloads(self, mock_get):
+        """Verifica que el cron procese los mensajes fallidos de los últimos días."""
+        mock_res1 = MagicMock()
+        mock_res1.status_code = 200
+        mock_res1.json.return_value = {"url": "https://cdn.whatsapp.com/test.jpg", "mime_type": "image/jpeg"}
+        mock_res2 = MagicMock()
+        mock_res2.status_code = 200
+        mock_res2.content = b"CRON_RECOVERED_BYTES"
+        mock_get.side_effect = [mock_res1, mock_res2]
+
+        msg = self.env["whatsapp.message"].create({
+            "wa_account_id": self.account.id,
+            "mobile_number": "50767082996",
+            "body": "📷 Comprobante cron",
+            "msg_type": "inbound",
+            "state": "delivered",
+            "msg_uid": "wamid.TEST_CRON_456",
+            "media_id": "MEDIA_ID_CRON",
+            "media_type": "image",
+            "media_status": "pending",
+        })
+
+        self.env["whatsapp.message"].cron_retry_failed_media_downloads()
+        msg.invalidate_recordset()
+        self.assertEqual(msg.media_status, "downloaded")
+        self.assertTrue(bool(msg.attachment_id))
+
+
 

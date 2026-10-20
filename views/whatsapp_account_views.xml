@@ -54,6 +54,35 @@
                             <field name="company_id" groups="base.group_multi_company"/>
                         </group>
                     </group>
+                    <notebook>
+                        <page string="Tarifas y Consumo Meta" name="meta_pricing">
+                            <group>
+                                <group string="Tarifas Meta Cloud API (USD)">
+                                    <field name="rate_utility_usd"/>
+                                    <field name="rate_marketing_usd"/>
+                                    <field name="rate_service_usd"/>
+                                </group>
+                                <group string="Consumo Acumulado este Mes">
+                                    <field name="currency_id" invisible="1"/>
+                                    <field name="total_utility_month"/>
+                                    <field name="total_free_month"/>
+                                    <field name="total_received_month"/>
+                                    <field name="total_spent_month_usd" class="fw-bold fs-4 text-primary"/>
+                                </group>
+                            </group>
+                            <group string="Auditoría Oficial Meta Graph API">
+                                <group>
+                                    <field name="meta_official_sent"/>
+                                    <field name="meta_official_delivered"/>
+                                    <field name="meta_last_sync_date"/>
+                                </group>
+                                <group>
+                                    <button name="action_sync_meta_analytics" string="Sincronizar Estadísticas de Meta"
+                                            type="object" icon="fa-refresh" class="btn-outline-primary"/>
+                                </group>
+                            </group>
+                        </page>
+                    </notebook>
                 </sheet>
                 <chatter/>
             </form>
@@ -70,6 +99,7 @@
                 <field name="phone_uid"/>
                 <field name="phone_number_id"/>
                 <field name="template_count"/>
+                <field name="total_spent_month_usd" optional="show"/>
                 <field name="company_id" groups="base.group_multi_company"/>
                 <field name="active" widget="boolean_toggle"/>
             </list>

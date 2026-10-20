@@ -17,22 +17,58 @@ class WhatsappComposer(models.TransientModel):
         required=True,
         default=lambda self: self.env["whatsapp.account"].search([("active", "=", True)], limit=1),
     )
+    allowed_template_ids = fields.Many2many(
+        "whatsapp.template",
+        compute="_compute_allowed_template_ids",
+        string="Plantillas Permitidas",
+    )
     template_id = fields.Many2one(
         "whatsapp.template",
         string="Plantilla de WhatsApp",
-        domain="[('wa_account_id', '=', wa_account_id), ('status', '=', 'approved'), '|', ('model_id.model', '=', res_model), ('model_id', '=', False)]",
+        domain="[('id', 'in', allowed_template_ids)]",
     )
     body_preview = fields.Text(string="Vista previa del mensaje", compute="_compute_body_preview")
+
+    @api.depends("wa_account_id", "res_model")
+    def _compute_allowed_template_ids(self):
+        Template = self.env["whatsapp.template"]
+        for rec in self:
+            domain = [("status", "=", "approved")]
+            if rec.wa_account_id:
+                domain.append(("wa_account_id", "=", rec.wa_account_id.id))
+            allowed_models = [False]
+            if rec.res_model:
+                allowed_models.append(rec.res_model)
+                if rec.res_model != "res.partner":
+                    allowed_models.append("res.partner")
+            domain.append(("model_id.model", "in", allowed_models))
+            rec.allowed_template_ids = Template.search(domain)
+
+    def _get_target_record(self):
+        """Devuelve el registro adecuado según el modelo al que aplica la plantilla."""
+        self.ensure_one()
+        model_target = self.template_id.model_id.model if self.template_id and self.template_id.model_id else False
+
+        if model_target == "res.partner" and self.partner_id:
+            return self.partner_id
+        if self.res_model and self.res_id and self.res_model in self.env:
+            record = self.env[self.res_model].browse(self.res_id)
+            if record.exists():
+                if model_target and model_target != self.res_model:
+                    # Si la plantilla apunta a otro modelo relacionado, buscar si el registro tiene ese campo m2o
+                    for fname, field in record._fields.items():
+                        if field.type == "many2one" and field.comodel_name == model_target:
+                            target = getattr(record, fname)
+                            if target:
+                                return target
+                return record
+        return self.partner_id
 
     @api.depends("template_id", "partner_id", "res_model", "res_id")
     def _compute_body_preview(self):
         for rec in self:
             if rec.template_id:
-                record = (
-                    self.env[rec.res_model].browse(rec.res_id)
-                    if rec.res_model and rec.res_id and rec.res_model in self.env
-                    else rec.partner_id
-                )
+                record = rec._get_target_record()
                 text = rec.template_id.body or ""
                 if record and rec.template_id.variable_ids:
                     for var in rec.template_id.variable_ids:
@@ -54,11 +90,7 @@ class WhatsappComposer(models.TransientModel):
         if not self.template_id:
             raise UserError(_("Debes seleccionar una plantilla aprobada de Meta para enviar por la API oficial."))
 
-        record = (
-            self.env[self.res_model].browse(self.res_id)
-            if self.res_model and self.res_id and self.res_model in self.env
-            else self.partner_id
-        )
+        record = self._get_target_record()
 
         msg = self.template_id.send_to_phone(self.phone, record=record)
 

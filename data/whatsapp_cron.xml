@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo noupdate="1">
+    <!-- Cron periódico para reintentar descargas de archivos/comprobantes de WhatsApp fallidas o pendientes -->
+    <record id="ir_cron_retry_whatsapp_media_download" model="ir.cron">
+        <field name="name">WhatsApp: Reintentar Descarga de Archivos Fallidos</field>
+        <field name="model_id" ref="model_whatsapp_message"/>
+        <field name="state">code</field>
+        <field name="code">model.cron_retry_failed_media_downloads()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">hours</field>
+        <field name="active" eval="True"/>
+    </record>
+</odoo>

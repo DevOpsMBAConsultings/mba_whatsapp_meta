@@ -23,6 +23,14 @@
               action="whatsapp_message_action"
               groups="group_whatsapp_user"/>
 
+    <!-- 2.1 Receipts & Proofs (Comprobantes) -->
+    <menuitem id="menu_whatsapp_proofs"
+              name="Comprobantes / Archivos"
+              parent="menu_whatsapp_root"
+              sequence="25"
+              action="whatsapp_proof_action"
+              groups="group_whatsapp_user"/>
+
     <!-- 3. Configuration (Configuración) -->
     <menuitem id="menu_whatsapp_config"
               name="Configuration"

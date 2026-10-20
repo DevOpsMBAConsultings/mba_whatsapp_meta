@@ -281,7 +281,11 @@ class WhatsappTemplate(models.Model):
                 parameters.append({"type": "text", "text": val_str})
                 rendered_body = rendered_body.replace(f"{{{{{idx}}}}}", val_str)
         elif record and self.variable_ids:
-            for var in self.variable_ids:
+            seen_seq = set()
+            for var in self.variable_ids.sorted("sequence"):
+                if var.sequence in seen_seq:
+                    continue
+                seen_seq.add(var.sequence)
                 val = var.get_value_for_record(record)
                 parameters.append({"type": "text", "text": val})
                 rendered_body = rendered_body.replace(f"{{{{{var.sequence}}}}}", val)
@@ -312,12 +316,21 @@ class WhatsappTemplate(models.Model):
             "Content-Type": "application/json",
         }
 
+        # Costo oficial de Meta según categoría de plantilla
+        cost_usd = 0.0
+        cat_upper = (self.category or "").upper()
+        if cat_upper == "UTILITY":
+            cost_usd = account.rate_utility_usd
+        elif cat_upper == "MARKETING":
+            cost_usd = account.rate_marketing_usd
+
         msg_vals = {
             "wa_account_id": account.id,
             "template_id": self.id,
             "mobile_number": cleaned_phone,
             "body": rendered_body,
             "state": "outgoing",
+            "cost_usd": cost_usd,
         }
 
         try:
@@ -354,20 +367,38 @@ class WhatsappTemplate(models.Model):
                     partner = record
                 elif hasattr(record, "partner_id") and record.partner_id:
                     partner = record.partner_id
-            if not partner:
+                elif hasattr(record, "application_id") and getattr(record.application_id, "partner_id", False):
+                    partner = record.application_id.partner_id
+
+            # Si el teléfono del registro no coincide con el número al que se envió, buscar por teléfono
+            partner_phone = getattr(partner, "phone", "") or (getattr(partner, "mobile", "") if partner and "mobile" in partner._fields else "")
+            if not partner or (partner and account.clean_phone_number(partner_phone) != cleaned_phone):
                 partner = account.find_partner_by_phone(cleaned_phone)
+
+            # Si no existe ningún contacto con este teléfono, crear el contacto base para no perder la conversación
+            if not partner:
+                p_vals = {
+                    "name": f"WhatsApp +{cleaned_phone}",
+                    "company_id": account.company_id.id,
+                }
+                if "phone" in self.env["res.partner"]._fields:
+                    p_vals["phone"] = f"+{cleaned_phone}"
+                elif "mobile" in self.env["res.partner"]._fields:
+                    p_vals["mobile"] = f"+{cleaned_phone}"
+                partner = self.env["res.partner"].sudo().create(p_vals)
 
             if partner:
                 try:
                     Channel = self.env["discuss.channel"].sudo()
-                    channel = Channel._get_or_create_chat(partners_to=[partner.id], pin=True)
+                    admin_user = self.env.ref("base.user_admin", raise_if_not_found=False) or self.env.user
+                    channel = Channel.with_user(admin_user).sudo()._get_or_create_chat(partners_to=[partner.id], pin=True)
                     channel.write({
                         "whatsapp_number": cleaned_phone,
                         "whatsapp_partner_id": partner.id,
                         "whatsapp_account_id": account.id,
                     })
-                    channel.with_context(whatsapp_no_dispatch=True).message_post(
-                        body=rendered_body,
+                    channel.with_user(admin_user).sudo().with_context(whatsapp_no_dispatch=True).message_post(
+                        body=(rendered_body or "").replace("\n", "<br/>"),
                         message_type="comment",
                         subtype_xmlid="mail.mt_comment",
                     )
@@ -410,6 +441,11 @@ class WhatsappTemplateButton(models.Model):
     )
     name = fields.Char(string="Texto del Botón", required=True)
     url_or_phone = fields.Char(string="URL / Teléfono")
+
+
+    def _post_sync_template_hook(self, meta_name, matches):
+        """Hook extensible para módulos de negocio o integraciones específicas de cliente."""
+        pass
 
 
 class WhatsappTemplateVariable(models.Model):
