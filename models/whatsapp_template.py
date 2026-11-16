@@ -611,6 +611,7 @@ class WhatsappTemplateVariable(models.Model):
 
     @api.constrains("field_name", "model")
     def _check_field_name_path(self):
+        safe_date_attrs = {"year", "month", "day"}
         for rec in self:
             if not rec.field_name:
                 continue
@@ -619,14 +620,21 @@ class WhatsappTemplateVariable(models.Model):
                 raise ValidationError(_("Ruta de campo inválida en variable de plantilla: %s") % rec.field_name)
             if rec.model and rec.model in self.env:
                 model_obj = self.env[rec.model]
-                for part in parts:
+                for idx, part in enumerate(parts):
                     field = model_obj._fields.get(part)
                     if not field:
                         raise ValidationError(
                             _("El campo '%s' no existe en el modelo '%s'.") % (part, model_obj._name)
                         )
-                    if field.comodel_name and field.comodel_name in self.env:
-                        model_obj = self.env[field.comodel_name]
+                    if idx < len(parts) - 1:
+                        if field.type in ("date", "datetime") and idx == len(parts) - 2 and parts[idx + 1] in safe_date_attrs:
+                            break
+                        if field.comodel_name and field.comodel_name in self.env:
+                            model_obj = self.env[field.comodel_name]
+                        else:
+                            raise ValidationError(
+                                _("El campo '%s' en '%s' no es relacional.") % (part, model_obj._name)
+                            )
 
     def get_value_for_record(self, record):
         """Extrae el valor de la variable según line_type y validación de permisos."""
@@ -643,17 +651,25 @@ class WhatsappTemplateVariable(models.Model):
             return ""
         if not self.field_name or not record:
             return ""
+        safe_date_attrs = {"year", "month", "day"}
         val = record.sudo(False)
         for part in self.field_name.split("."):
-            if not part or part.startswith("_") or part not in val._fields:
+            if not part or part.startswith("_"):
                 raise AccessError(_("Ruta de campo no permitida: %s") % self.field_name)
-            val.check_access("read")
-            field = val._fields[part]
-            if field.groups and not self.env.su and not self.env.user.has_groups(field.groups):
-                raise AccessError(_("No tiene permisos para leer el campo '%s'.") % part)
-            val = val[part]
-            if not val:
-                break
+            if isinstance(val, models.BaseModel):
+                if part not in val._fields:
+                    raise AccessError(_("Ruta de campo no permitida: %s") % self.field_name)
+                val.check_access("read")
+                field = val._fields[part]
+                if field.groups and not self.env.su and not self.env.user.has_groups(field.groups):
+                    raise AccessError(_("No tiene permisos para leer el campo '%s'.") % part)
+                val = val[part]
+                if not val:
+                    break
+            elif hasattr(val, "year") and hasattr(val, "month") and hasattr(val, "day") and part in safe_date_attrs:
+                val = getattr(val, part)
+            else:
+                raise AccessError(_("Ruta de campo no permitida: %s") % self.field_name)
         if isinstance(val, models.BaseModel):
             return val.display_name or ""
         return str(val) if val is not None else ""
