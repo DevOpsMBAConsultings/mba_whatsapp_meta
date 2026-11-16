@@ -7,6 +7,9 @@ from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
 
+RETRYABLE_ERROR_CODES = {"130429", "131016", "131048", "131056"}
+BOUNCED_ERROR_CODES = {"131026", "131047", "131051", "132000", "131021", "131009"}
+
 
 class WhatsappMessage(models.Model):
     _name = "whatsapp.message"
@@ -31,9 +34,11 @@ class WhatsappMessage(models.Model):
     state = fields.Selection(
         [
             ("draft", "Borrador"),
+            ("outgoing", "En Cola"),
             ("sent", "Enviado"),
             ("delivered", "Entregado"),
             ("read", "Leído"),
+            ("bounced", "Rebotado"),
             ("error", "Error"),
         ],
         string="Estado",
@@ -42,7 +47,13 @@ class WhatsappMessage(models.Model):
         index=True,
     )
     msg_uid = fields.Char(string="ID Meta (wamid)", index=True)
+    error_code = fields.Char(string="Código Error Meta", index=True)
     error_msg = fields.Text(string="Detalle del Error")
+
+    @api.model
+    def _classify_meta_error_state(self, err_data):
+        code = str((err_data or {}).get("code") or "")
+        return "bounced" if code in BOUNCED_ERROR_CODES else "error"
 
     model = fields.Char(string="Modelo Origen", index=True)
     res_id = fields.Integer(string="ID del Registro", index=True)
@@ -82,7 +93,16 @@ class WhatsappMessage(models.Model):
         """Abre el canal de Conversaciones asociado a este número."""
         self.ensure_one()
         clean_num = self.wa_account_id.clean_phone_number(self.mobile_number)
-        channel = self.env["discuss.channel"].sudo().search([("whatsapp_number", "=", clean_num)], limit=1)
+        Channel = self.env["discuss.channel"].sudo()
+        channel = Channel.search(
+            [("whatsapp_number", "=", clean_num), ("whatsapp_account_id", "=", self.wa_account_id.id)],
+            limit=1,
+        )
+        if not channel:
+            channel = Channel.search(
+                [("whatsapp_number", "=", clean_num), ("whatsapp_account_id", "=", False)],
+                limit=1,
+            )
         if not channel:
             raise UserError(_("No existe un canal de Conversaciones para este contacto."))
         return {

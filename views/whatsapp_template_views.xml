@@ -32,9 +32,17 @@
                         </group>
                         <group>
                             <field name="template_name" placeholder="e.g. lead_follow_up"/>
+                            <field name="wa_template_uid" readonly="1"/>
                             <field name="lang_code" placeholder="es_PA"/>
+                            <field name="quality_score" widget="badge"
+                                   decoration-success="quality_score == 'green'"
+                                   decoration-warning="quality_score == 'yellow'"
+                                   decoration-danger="quality_score == 'red'"
+                                   decoration-muted="quality_score == 'unknown'"/>
                             <field name="header_type"/>
                             <field name="header_text" invisible="header_type != 'text'"/>
+                            <field name="header_attachment_id" invisible="header_type not in ('image', 'document', 'video') or report_id"/>
+                            <field name="report_id" invisible="header_type != 'document'"/>
                             <field name="footer_text" placeholder="e.g. Motor Group TE"/>
                         </group>
                     </group>
@@ -59,11 +67,13 @@
                             <field name="variable_ids" context="{'default_model': model}">
                                 <list editable="bottom">
                                     <field name="sequence" column_invisible="True"/>
+                                    <field name="component_type" string="Component"/>
                                     <field name="name" string="Name" placeholder="{{1}}"/>
                                     <field name="sample_value" string="Sample Value"/>
                                     <field name="line_type" string="Type"/>
                                     <field name="model" column_invisible="True"/>
                                     <field name="field_name" string="Field" widget="field_selector" options="{'model': 'model'}" invisible="line_type != 'field'"/>
+                                    <field name="free_text" string="Static Text" invisible="line_type != 'free_text'"/>
                                 </list>
                             </field>
                         </page>
@@ -90,9 +100,14 @@
                 <field name="lang_code"/>
                 <field name="status" widget="badge"
                        decoration-success="status == 'approved'"
-                       decoration-warning="status == 'pending'"
-                       decoration-danger="status == 'rejected'"
+                       decoration-warning="status in ('pending', 'paused')"
+                       decoration-danger="status in ('rejected', 'disabled')"
                        decoration-muted="status == 'draft'"/>
+                <field name="quality_score" widget="badge" optional="show"
+                       decoration-success="quality_score == 'green'"
+                       decoration-warning="quality_score == 'yellow'"
+                       decoration-danger="quality_score == 'red'"
+                       decoration-muted="quality_score == 'unknown'"/>
             </list>
         </field>
     </record>

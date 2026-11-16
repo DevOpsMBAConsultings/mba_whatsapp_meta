@@ -5,7 +5,7 @@ import re
 import requests
 
 from odoo import api, fields, models, _
-from odoo.exceptions import UserError
+from odoo.exceptions import AccessError, UserError, ValidationError
 
 _logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class WhatsappTemplate(models.Model):
     wa_account_id = fields.Many2one(
         "whatsapp.account", string="Cuenta de WhatsApp", required=True, ondelete="cascade", tracking=True
     )
+    wa_template_uid = fields.Char(string="Meta Template ID", copy=False, index=True)
     model_id = fields.Many2one("ir.model", string="Aplica a", help="Modelo de Odoo sobre el que se utiliza.")
     model = fields.Char(related="model_id.model", string="Nombre Técnico del Modelo", store=True)
 
@@ -64,9 +65,23 @@ class WhatsappTemplate(models.Model):
             ("pending", "Pending"),
             ("approved", "Approved"),
             ("rejected", "Rejected"),
+            ("paused", "Paused"),
+            ("disabled", "Disabled"),
         ],
         string="Estado",
         default="draft",
+        tracking=True,
+    )
+    quality_score = fields.Selection(
+        [
+            ("green", "Green"),
+            ("yellow", "Yellow"),
+            ("red", "Red"),
+            ("unknown", "Unknown"),
+        ],
+        string="Calidad Meta",
+        default="unknown",
+        readonly=True,
         tracking=True,
     )
 
@@ -82,12 +97,49 @@ class WhatsappTemplate(models.Model):
         default="none",
     )
     header_text = fields.Char(string="Texto del Encabezado")
+    header_attachment_id = fields.Many2one(
+        "ir.attachment",
+        string="Archivo de Encabezado",
+        help="Imagen, documento o video estático para el encabezado de la plantilla.",
+    )
+    report_id = fields.Many2one(
+        "ir.actions.report",
+        string="Reporte PDF Dinámico",
+        domain="[('model', '=', model), ('report_type', '=', 'qweb-pdf')]",
+        help="Reporte QWeb PDF generado dinámicamente al enviar encabezados de tipo documento.",
+    )
     body = fields.Text(string="Cuerpo del Mensaje", help="Ej: Hola {{1}}, su cuota {{2}} por ${{3}} vence el {{4}}.")
     footer_text = fields.Char(string="Pie de Página")
     variable_ids = fields.One2many("whatsapp.template.variable", "template_id", string="Mapeo de Variables")
     button_ids = fields.One2many("whatsapp.template.button", "template_id", string="Botones")
 
     message_count = fields.Integer(string="Mensajes", compute="_compute_message_count")
+
+    _unique_template_lang_account = models.Constraint(
+        "UNIQUE(template_name, lang_code, wa_account_id)",
+        "Ya existe una plantilla con el mismo nombre técnico, idioma y cuenta de WhatsApp.",
+    )
+
+    def _auto_init(self):
+        cr = self.env.cr
+        cr.execute("SELECT to_regclass('whatsapp_template')")
+        if cr.fetchone()[0]:
+            # Deduplicar plantillas previas antes de aplicar la restricción única
+            cr.execute("""
+                SELECT template_name, lang_code, wa_account_id,
+                       array_agg(id ORDER BY (status = 'approved') DESC, write_date DESC, id DESC) AS ids
+                FROM whatsapp_template
+                GROUP BY template_name, lang_code, wa_account_id
+                HAVING COUNT(*) > 1
+            """)
+            for _name, _lang, _acc, ids in cr.fetchall():
+                keep_id, dup_ids = ids[0], ids[1:]
+                cr.execute(
+                    "UPDATE whatsapp_message SET template_id = %s WHERE template_id = ANY(%s)",
+                    (keep_id, dup_ids),
+                )
+                cr.execute("DELETE FROM whatsapp_template WHERE id = ANY(%s)", (dup_ids,))
+        return super()._auto_init()
 
     def _compute_message_count(self):
         for rec in self:
@@ -119,7 +171,8 @@ class WhatsappTemplate(models.Model):
         """Envía la plantilla a Meta Graph API para aprobación oficial."""
         self.ensure_one()
         account = self.wa_account_id
-        if not account or not account.token:
+        token = account.sudo().token if account else False
+        if not account or not token:
             raise UserError(_("Debes configurar un Access Token válido en la cuenta de WhatsApp."))
 
         components = []
@@ -172,7 +225,7 @@ class WhatsappTemplate(models.Model):
 
         url = f"https://graph.facebook.com/{account.api_version}/{account.account_uid}/message_templates"
         headers = {
-            "Authorization": f"Bearer {account.token}",
+            "Authorization": f"Bearer {token}",
             "Content-Type": "application/json",
         }
 
@@ -272,30 +325,76 @@ class WhatsappTemplate(models.Model):
                 "error_msg": "Número en lista negra (opt-out previo).",
             })
 
-        # Construir parámetros
-        parameters = []
+        # Construir parámetros por componente
+        components = []
+
+        # 1. HEADER component (texto dinámico, reporte PDF o adjunto estático)
+        header_params = []
+        if self.header_type == "text":
+            header_vars = self.variable_ids.filtered(lambda v: v.component_type == "header").sorted("sequence")
+            for var in header_vars:
+                if record or var.line_type != "field":
+                    header_params.append({"type": "text", "text": var.get_value_for_record(record)})
+        elif self.header_type == "document" and self.report_id and record:
+            pdf_bytes, _fmt = self.env["ir.actions.report"].sudo()._render_qweb_pdf(
+                self.report_id.report_name, [record.id]
+            )
+            pdf_name = f"{(record.display_name or self.template_name).replace('/', '_')}.pdf"
+            media_id = account.upload_media(pdf_bytes, pdf_name, "application/pdf")
+            if media_id:
+                header_params.append({"type": "document", "document": {"id": media_id, "filename": pdf_name}})
+        elif self.header_type in ("image", "document", "video") and self.header_attachment_id:
+            att = self.header_attachment_id.sudo()
+            media_id = account.upload_media(att.raw, att.name, att.mimetype or "application/octet-stream")
+            if media_id:
+                media_payload = {"id": media_id}
+                if self.header_type == "document" and att.name:
+                    media_payload["filename"] = att.name
+                header_params.append({"type": self.header_type, self.header_type: media_payload})
+
+        if header_params:
+            components.append({"type": "header", "parameters": header_params})
+
+        # 2. BODY component
+        body_parameters = []
         rendered_body = self.body or ""
         if custom_params:
             for idx, val in enumerate(custom_params, start=1):
                 val_str = str(val or "")
-                parameters.append({"type": "text", "text": val_str})
+                body_parameters.append({"type": "text", "text": val_str})
                 rendered_body = rendered_body.replace(f"{{{{{idx}}}}}", val_str)
-        elif record and self.variable_ids:
+        elif self.variable_ids:
+            body_vars = self.variable_ids.filtered(lambda v: v.component_type == "body").sorted("sequence")
             seen_seq = set()
-            for var in self.variable_ids.sorted("sequence"):
+            for var in body_vars:
                 if var.sequence in seen_seq:
                     continue
                 seen_seq.add(var.sequence)
-                val = var.get_value_for_record(record)
-                parameters.append({"type": "text", "text": val})
+                val = var.get_value_for_record(record) if (record or var.line_type != "field") else ""
+                body_parameters.append({"type": "text", "text": val})
                 rendered_body = rendered_body.replace(f"{{{{{var.sequence}}}}}", val)
 
-        components = []
-        if parameters:
+        if body_parameters:
             components.append({
                 "type": "body",
-                "parameters": parameters,
+                "parameters": body_parameters,
             })
+
+        # 3. BUTTON components (URL dinámica con {{1}})
+        btn_vars = self.variable_ids.filtered(lambda v: v.component_type == "button").sorted("sequence")
+        url_buttons = self.button_ids.filtered(
+            lambda b: b.button_type == "url" and "{{" in (b.url_or_phone or "")
+        ).sorted("sequence")
+        for b_idx, btn in enumerate(url_buttons):
+            if b_idx < len(btn_vars):
+                var = btn_vars[b_idx]
+                btn_val = var.get_value_for_record(record) if (record or var.line_type != "field") else ""
+                components.append({
+                    "type": "button",
+                    "sub_type": "url",
+                    "index": str(b_idx),
+                    "parameters": [{"type": "text", "text": btn_val}],
+                })
 
         payload = {
             "messaging_product": "whatsapp",
@@ -309,12 +408,6 @@ class WhatsappTemplate(models.Model):
         }
         if components:
             payload["template"]["components"] = components
-
-        url = f"https://graph.facebook.com/{account.api_version}/{account.phone_number_id}/messages"
-        headers = {
-            "Authorization": f"Bearer {account.token}",
-            "Content-Type": "application/json",
-        }
 
         # Costo oficial de Meta según categoría de plantilla
         cost_usd = 0.0
@@ -334,9 +427,7 @@ class WhatsappTemplate(models.Model):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload, timeout=15)
-            status_code = response.status_code
-            data = response.json() if response.content else {}
+            status_code, data = account.send_meta_raw(payload)
         except Exception as e:
             _logger.error("Error de conexión con Meta Graph API: %s", e)
             msg_vals.update({
@@ -390,14 +481,25 @@ class WhatsappTemplate(models.Model):
             if partner:
                 try:
                     Channel = self.env["discuss.channel"].sudo()
-                    admin_user = self.env.ref("base.user_admin", raise_if_not_found=False) or self.env.user
-                    channel = Channel.with_user(admin_user).sudo()._get_or_create_chat(partners_to=[partner.id], pin=True)
+                    agent_user = (
+                        account.notify_user_ids[:1]
+                        or self.env.ref("base.user_admin", raise_if_not_found=False)
+                        or self.env.user
+                    )
+                    channel = Channel.search(
+                        [("whatsapp_number", "=", cleaned_phone), ("whatsapp_account_id", "=", account.id)],
+                        limit=1,
+                    )
+                    if not channel:
+                        channel = Channel.with_user(agent_user).sudo()._get_or_create_chat(
+                            partners_to=[partner.id], pin=True
+                        )
                     channel.write({
                         "whatsapp_number": cleaned_phone,
                         "whatsapp_partner_id": partner.id,
                         "whatsapp_account_id": account.id,
                     })
-                    channel.with_user(admin_user).sudo().with_context(whatsapp_no_dispatch=True).message_post(
+                    channel.with_user(agent_user).sudo().with_context(whatsapp_no_dispatch=True).message_post(
                         body=(rendered_body or "").replace("\n", "<br/>"),
                         message_type="comment",
                         subtype_xmlid="mail.mt_comment",
@@ -407,12 +509,16 @@ class WhatsappTemplate(models.Model):
 
             return msg
         else:
-            err_msg = data.get("error", {}).get("message", str(data))
+            err_data = data.get("error", {})
+            err_msg = err_data.get("message", str(data))
+            err_code = str(err_data.get("code") or "")
+            Msg = self.env["whatsapp.message"].sudo()
             msg_vals.update({
-                "state": "error",
+                "state": Msg._classify_meta_error_state(err_data),
+                "error_code": err_code or False,
                 "error_msg": f"HTTP {status_code}: {err_msg}",
             })
-            msg = self.env["whatsapp.message"].sudo().create(msg_vals)
+            msg = Msg.create(msg_vals)
             _logger.error("Error al enviar WhatsApp Meta a %s: %s", cleaned_phone, err_msg)
             if record and hasattr(record, "message_post"):
                 record.message_post(
@@ -420,6 +526,10 @@ class WhatsappTemplate(models.Model):
                     message_type="notification",
                 )
             return msg
+
+    def _post_sync_template_hook(self, meta_name, matches):
+        """Hook extensible para módulos de negocio o integraciones específicas de cliente."""
+        pass
 
 
 class WhatsappTemplateButton(models.Model):
@@ -454,10 +564,21 @@ class WhatsappTemplateVariable(models.Model):
     _order = "sequence"
 
     template_id = fields.Many2one("whatsapp.template", ondelete="cascade")
+    component_type = fields.Selection(
+        [
+            ("body", "Body"),
+            ("header", "Header"),
+            ("button", "Button"),
+        ],
+        string="Componente",
+        default="body",
+        required=True,
+    )
     sequence = fields.Integer(string="Posición", default=1)
     name = fields.Char(string="Name", default="{{1}}", required=True)
     model = fields.Char(string="Model", compute="_compute_model", store=True, readonly=False)
     sample_value = fields.Char(string="Sample Value", default="Sample Value")
+    free_text = fields.Char(string="Free Text")
     line_type = fields.Selection(
         [
             ("field", "Field of Model"),
@@ -488,20 +609,51 @@ class WhatsappTemplateVariable(models.Model):
             if match:
                 self.sequence = int(match.group(0))
 
+    @api.constrains("field_name", "model")
+    def _check_field_name_path(self):
+        for rec in self:
+            if not rec.field_name:
+                continue
+            parts = rec.field_name.split(".")
+            if any(not p or p.startswith("_") for p in parts):
+                raise ValidationError(_("Ruta de campo inválida en variable de plantilla: %s") % rec.field_name)
+            if rec.model and rec.model in self.env:
+                model_obj = self.env[rec.model]
+                for part in parts:
+                    field = model_obj._fields.get(part)
+                    if not field:
+                        raise ValidationError(
+                            _("El campo '%s' no existe en el modelo '%s'.") % (part, model_obj._name)
+                        )
+                    if field.comodel_name and field.comodel_name in self.env:
+                        model_obj = self.env[field.comodel_name]
+
     def get_value_for_record(self, record):
-        """Extrae el valor del registro siguiendo la ruta de campos punto a punto."""
+        """Extrae el valor de la variable según line_type y validación de permisos."""
         self.ensure_one()
+        if self.line_type == "free_text":
+            return self.free_text or self.sample_value or ""
+        if self.line_type == "user_name":
+            return self.env.user.name or ""
+        if self.line_type == "user_phone":
+            return self.env.user.partner_id.phone or ""
+        if self.line_type == "portal_link":
+            if record and hasattr(record, "get_portal_url"):
+                return (record.get_base_url() or "") + (record.get_portal_url() or "")
+            return ""
         if not self.field_name or not record:
             return ""
-        try:
-            val = record
-            for part in self.field_name.split("."):
-                val = getattr(val, part, None)
-                if val is None:
-                    break
-            if isinstance(val, models.BaseModel):
-                return val.display_name or ""
-            return str(val) if val is not None else ""
-        except Exception as e:
-            _logger.warning("No se pudo evaluar variable %s en %s: %s", self.field_name, record, e)
-            return ""
+        val = record.sudo(False)
+        for part in self.field_name.split("."):
+            if not part or part.startswith("_") or part not in val._fields:
+                raise AccessError(_("Ruta de campo no permitida: %s") % self.field_name)
+            val.check_access("read")
+            field = val._fields[part]
+            if field.groups and not self.env.su and not self.env.user.has_groups(field.groups):
+                raise AccessError(_("No tiene permisos para leer el campo '%s'.") % part)
+            val = val[part]
+            if not val:
+                break
+        if isinstance(val, models.BaseModel):
+            return val.display_name or ""
+        return str(val) if val is not None else ""

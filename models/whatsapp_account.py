@@ -5,6 +5,11 @@ import re
 import requests
 import time
 
+try:
+    import phonenumbers
+except ImportError:
+    phonenumbers = None
+
 from odoo import api, fields, models, _
 from odoo.exceptions import UserError
 
@@ -41,17 +46,19 @@ class WhatsappAccount(models.Model):
 
     # 1. Enviar Mensajes (Meta Graph API)
     app_id = fields.Char(string="App ID", tracking=True)
-    app_secret = fields.Char(string="App Secret")
+    app_secret = fields.Char(string="App Secret", groups="mba_whatsapp_meta.group_whatsapp_admin")
     phone_number_id = fields.Char(string="Phone Number ID", required=True, tracking=True)
     account_uid = fields.Char(string="WhatsApp Business Account ID", required=True, tracking=True)
-    token = fields.Char(string="Access Token Permanente", required=True)
+    token = fields.Char(string="Access Token Permanente", required=True, groups="mba_whatsapp_meta.group_whatsapp_admin")
     phone_uid = fields.Char(string="Número de Teléfono", tracking=True)
     api_version = fields.Char(string="Versión Graph API", default="v21.0", required=True)
 
     # 2. Recibir Mensajes (Webhooks)
     callback_url = fields.Char(string="Callback URL", compute="_compute_callback_url")
     webhook_verify_token = fields.Char(
-        string="Webhook Verify Token", default=lambda self: self._default_webhook_token()
+        string="Webhook Verify Token",
+        default=lambda self: self._default_webhook_token(),
+        groups="mba_whatsapp_meta.group_whatsapp_admin",
     )
 
     # Contadores
@@ -84,24 +91,42 @@ class WhatsappAccount(models.Model):
     def _compute_monthly_usage(self):
         first_day_month = fields.Datetime.now().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
         Msg = self.env["whatsapp.message"]
+        groups = Msg._read_group(
+            [("wa_account_id", "in", self.ids), ("create_date", ">=", first_day_month)],
+            groupby=["wa_account_id", "msg_type", "template_id"],
+            aggregates=["__count", "cost_usd:sum"],
+        )
+        stats = {rec.id: {"utility": 0, "free": 0, "received": 0, "spent": 0.0} for rec in self}
+        for account, msg_type, template, count, cost_sum in groups:
+            bucket = stats.get(account.id)
+            if not bucket:
+                continue
+            bucket["spent"] += cost_sum or 0.0
+            if msg_type == "inbound":
+                bucket["received"] += count
+            elif msg_type == "outbound":
+                if template and (template.category or "").upper() == "UTILITY":
+                    bucket["utility"] += count
+                else:
+                    bucket["free"] += count
         for rec in self:
-            domain = [("wa_account_id", "=", rec.id), ("create_date", ">=", first_day_month)]
-            msgs = Msg.search(domain)
-            rec.total_utility_month = len(msgs.filtered(lambda m: m.msg_type == "outbound" and m.template_id and (m.template_id.category or "").upper() == "UTILITY"))
-            rec.total_free_month = len(msgs.filtered(lambda m: m.msg_type == "outbound" and (not m.template_id or (m.template_id.category or "").upper() != "UTILITY")))
-            rec.total_received_month = len(msgs.filtered(lambda m: m.msg_type == "inbound"))
-            rec.total_spent_month_usd = sum(msgs.mapped("cost_usd"))
+            bucket = stats[rec.id]
+            rec.total_utility_month = bucket["utility"]
+            rec.total_free_month = bucket["free"]
+            rec.total_received_month = bucket["received"]
+            rec.total_spent_month_usd = bucket["spent"]
 
     def action_sync_meta_analytics(self):
         """Consulta el endpoint oficial de analytics de Meta Graph API."""
         self.ensure_one()
-        if not self.token or not self.account_uid:
+        token = self.sudo().token
+        if not token or not self.account_uid:
             raise UserError(_("Faltan credenciales de Meta (Token o WABA ID)."))
 
         now = int(time.time())
         start = now - (7 * 86400)
         url = f"https://graph.facebook.com/{self.api_version}/{self.account_uid}?fields=analytics.start({start}).end({now}).granularity(DAY)"
-        headers = {"Authorization": f"Bearer {self.token}"}
+        headers = {"Authorization": f"Bearer {token}"}
 
         try:
             res = requests.get(url, headers=headers, timeout=15)
@@ -151,14 +176,30 @@ class WhatsappAccount(models.Model):
             rec.message_count = self.env["whatsapp.message"].search_count([("wa_account_id", "=", rec.id)])
 
     @api.model
-    def clean_phone_number(self, phone):
-        """Sanitiza y normaliza un número a formato internacional E.164.
+    def clean_phone_number(self, phone, country=None):
+        """Sanitiza y normaliza un número a formato E.164 (solo dígitos, sin '+').
 
-        Si tiene 8 dígitos (formato estándar de Panamá), antepone '507'.
+        Usa phonenumbers cuando está disponible con el país indicado o de la compañía;
+        mantiene fallback de 8 dígitos a Panamá ('507').
         """
         if not phone:
             return False
-        digits = re.sub(r"\D", "", str(phone))
+        raw = str(phone).strip()
+        if phonenumbers:
+            region = None
+            if country and getattr(country, "code", False):
+                region = country.code
+            elif self and self.company_id.country_id.code:
+                region = self.company_id.country_id.code
+            elif self.env.company.country_id.code:
+                region = self.env.company.country_id.code
+            try:
+                parsed = phonenumbers.parse(raw, None if raw.startswith("+") else region)
+                if phonenumbers.is_possible_number(parsed):
+                    return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164).lstrip("+")
+            except Exception:
+                pass
+        digits = re.sub(r"\D", "", raw)
         if len(digits) == 8:
             return f"507{digits}"
         if digits.startswith("00"):
@@ -167,12 +208,19 @@ class WhatsappAccount(models.Model):
 
     @api.model
     def find_partner_by_phone(self, phone):
-        """Busca un res.partner por número de teléfono de forma compatible entre versiones de Odoo."""
+        """Busca un res.partner por número de teléfono (E.164 exacto primero, luego sufijo)."""
         if not phone:
             return self.env["res.partner"].browse()
         clean = self.clean_phone_number(phone)
-        short_num = clean[-8:] if len(clean) >= 8 else clean
+        if not clean:
+            return self.env["res.partner"].browse()
         Partner = self.env["res.partner"].sudo()
+        for candidate in (f"+{clean}", clean):
+            if "phone" in Partner._fields:
+                match = Partner.search([("phone", "=", candidate)], limit=1)
+                if match:
+                    return match
+        short_num = clean[-8:] if len(clean) >= 8 else clean
         if "phone_mobile_search" in Partner._fields:
             domain = [("phone_mobile_search", "ilike", short_num)]
         elif "mobile" in Partner._fields:
@@ -185,7 +233,7 @@ class WhatsappAccount(models.Model):
         """Prueba credenciales contra Meta Graph API."""
         self.ensure_one()
         url = f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}"
-        headers = {"Authorization": f"Bearer {self.token}"}
+        headers = {"Authorization": f"Bearer {self.sudo().token}"}
         try:
             res = requests.get(url, headers=headers, timeout=12)
             data = res.json()
@@ -222,82 +270,132 @@ class WhatsappAccount(models.Model):
             raise UserError(_("Error de conexión con Meta: %s") % str(e))
 
     def action_sync_templates(self):
-        """Sincroniza plantillas desde Meta WhatsApp Business Account."""
+        """Sincroniza plantillas desde Meta WhatsApp Business Account con paginación."""
         self.ensure_one()
         url = f"https://graph.facebook.com/{self.api_version}/{self.account_uid}/message_templates"
-        headers = {"Authorization": f"Bearer {self.token}"}
+        headers = {"Authorization": f"Bearer {self.sudo().token}"}
+        status_map = {
+            "approved": "approved",
+            "pending": "pending",
+            "rejected": "rejected",
+            "paused": "paused",
+            "disabled": "disabled",
+        }
+        quality_map = {"green": "green", "yellow": "yellow", "red": "red"}
+        Template = self.env["whatsapp.template"].sudo()
+        synced = 0
+        next_url = url
+        pages = 0
+        max_pages = 50
         try:
-            res = requests.get(url, headers=headers, timeout=15)
-            data = res.json()
-            if res.status_code != 200:
-                err_msg = data.get("error", {}).get("message", res.text)
-                raise UserError(_("Error al sincronizar con Meta (%s): %s") % (res.status_code, err_msg))
-            templates = data.get("data", [])
-            Template = self.env["whatsapp.template"].sudo()
-            synced = 0
-            for item in templates:
-                meta_name = item.get("name")
-                meta_status = item.get("status", "DRAFT").lower()
-                meta_lang = item.get("language", "es")
-                meta_cat = item.get("category", "UTILITY")
-                header_type = "none"
-                header_text = ""
-                body_text = ""
-                footer_text = ""
-                for comp in item.get("components", []):
-                    ctype = comp.get("type")
-                    if ctype == "HEADER":
-                        fmt = comp.get("format", "TEXT").lower()
-                        if fmt == "text":
-                            header_type = "text"
-                            header_text = comp.get("text", "")
-                        elif fmt in ("image", "document", "video"):
-                            header_type = fmt
-                    elif ctype == "BODY":
-                        body_text = comp.get("text", "")
-                    elif ctype == "FOOTER":
-                        footer_text = comp.get("text", "")
+            while next_url and pages < max_pages:
+                pages += 1
+                res = requests.get(next_url, headers=headers, timeout=15)
+                data = res.json()
+                if res.status_code != 200:
+                    err_msg = data.get("error", {}).get("message", res.text)
+                    raise UserError(_("Error al sincronizar con Meta (%s): %s") % (res.status_code, err_msg))
 
-                existing = Template.search([
-                    ("wa_account_id", "=", self.id),
-                    ("template_name", "=", meta_name),
-                ], limit=1)
+                for item in data.get("data", []):
+                    meta_uid = str(item.get("id") or "")
+                    meta_name = item.get("name")
+                    meta_status = (item.get("status") or "PENDING").lower()
+                    meta_lang = item.get("language", "es")
+                    meta_cat = item.get("category", "UTILITY")
+                    raw_quality = item.get("quality_score")
+                    if isinstance(raw_quality, dict):
+                        raw_quality = raw_quality.get("score")
+                    quality_val = quality_map.get(str(raw_quality or "").lower(), "unknown")
 
-                vals = {
-                    "wa_account_id": self.id,
-                    "name": item.get("name", "").replace("_", " ").title(),
-                    "template_name": meta_name,
-                    "lang_code": meta_lang,
-                    "category": meta_cat,
-                    "status": "approved" if meta_status == "approved" else "pending",
-                    "header_type": header_type,
-                    "header_text": header_text,
-                    "body": body_text,
-                    "footer_text": footer_text,
-                }
-                if existing:
-                    existing.write(vals)
-                    rec = existing
-                else:
-                    rec = Template.create(vals)
+                    header_type = "none"
+                    header_text = ""
+                    body_text = ""
+                    footer_text = ""
+                    button_cmds = [(5, 0, 0)]
+                    for comp in item.get("components", []):
+                        ctype = comp.get("type")
+                        if ctype == "HEADER":
+                            fmt = comp.get("format", "TEXT").lower()
+                            if fmt == "text":
+                                header_type = "text"
+                                header_text = comp.get("text", "")
+                            elif fmt in ("image", "document", "video"):
+                                header_type = fmt
+                        elif ctype == "BODY":
+                            body_text = comp.get("text", "")
+                        elif ctype == "FOOTER":
+                            footer_text = comp.get("text", "")
+                        elif ctype == "BUTTONS":
+                            for b_idx, btn in enumerate(comp.get("buttons", []), start=1):
+                                btype = (btn.get("type") or "").upper()
+                                if btype == "URL":
+                                    mapped_btype = "url"
+                                    val = btn.get("url", "")
+                                elif btype == "PHONE_NUMBER":
+                                    mapped_btype = "phone_number"
+                                    val = btn.get("phone_number", "")
+                                else:
+                                    mapped_btype = "quick_reply"
+                                    val = ""
+                                button_cmds.append((0, 0, {
+                                    "sequence": b_idx * 10,
+                                    "button_type": mapped_btype,
+                                    "name": btn.get("text", "Button"),
+                                    "url_or_phone": val,
+                                }))
 
-                # Auto-detección y generación de variables {{1}}, {{2}}...
-                matches = sorted(list(set(re.findall(r"\{\{(\d+)\}\}", body_text))), key=int)
-                existing_vars = {int(v.sequence) for v in rec.variable_ids}
-                for idx in matches:
-                    if int(idx) not in existing_vars:
-                        self.env["whatsapp.template.variable"].create({
-                            "template_id": rec.id,
-                            "sequence": int(idx),
-                            "name": f"{{{{{idx}}}}}",
-                            "sample_value": f"Sample {idx}",
-                            "line_type": "field",
-                        })
+                    existing = Template.browse()
+                    if meta_uid:
+                        existing = Template.search([
+                            ("wa_account_id", "=", self.id),
+                            ("wa_template_uid", "=", meta_uid),
+                        ], limit=1)
+                    if not existing:
+                        existing = Template.search([
+                            ("wa_account_id", "=", self.id),
+                            ("template_name", "=", meta_name),
+                            ("lang_code", "=", meta_lang),
+                        ], limit=1)
 
-                # Hook extensible para preconfigurar campos o lógica post-sync
-                rec._post_sync_template_hook(meta_name, matches)
+                    vals = {
+                        "wa_account_id": self.id,
+                        "wa_template_uid": meta_uid or False,
+                        "name": (meta_name or "").replace("_", " ").title(),
+                        "template_name": meta_name,
+                        "lang_code": meta_lang,
+                        "category": meta_cat if meta_cat in ("UTILITY", "MARKETING", "AUTHENTICATION") else "UTILITY",
+                        "status": status_map.get(meta_status, "pending"),
+                        "quality_score": quality_val,
+                        "header_type": header_type,
+                        "header_text": header_text,
+                        "body": body_text,
+                        "footer_text": footer_text,
+                    }
+                    if len(button_cmds) > 1:
+                        vals["button_ids"] = button_cmds
+                    if existing:
+                        existing.write(vals)
+                        rec = existing
+                    else:
+                        rec = Template.create(vals)
 
-                synced += 1
+                    matches = sorted(list(set(re.findall(r"\{\{(\d+)\}\}", body_text))), key=int)
+                    existing_vars = {(v.component_type, int(v.sequence)) for v in rec.variable_ids}
+                    for idx in matches:
+                        if ("body", int(idx)) not in existing_vars:
+                            self.env["whatsapp.template.variable"].create({
+                                "template_id": rec.id,
+                                "component_type": "body",
+                                "sequence": int(idx),
+                                "name": f"{{{{{idx}}}}}",
+                                "sample_value": f"Sample {idx}",
+                                "line_type": "field",
+                            })
+
+                    rec._post_sync_template_hook(meta_name, matches)
+                    synced += 1
+
+                next_url = data.get("paging", {}).get("next")
 
             return {
                 "type": "ir.actions.client",
@@ -317,7 +415,7 @@ class WhatsappAccount(models.Model):
         self.ensure_one()
         url = f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}/messages"
         headers = {
-            "Authorization": f"Bearer {self.token}",
+            "Authorization": f"Bearer {self.sudo().token}",
             "Content-Type": "application/json",
         }
         res = requests.post(url, json=payload, headers=headers, timeout=15)
@@ -349,6 +447,89 @@ class WhatsappAccount(models.Model):
             "context": {"default_wa_account_id": self.id},
         }
 
+    def upload_media(self, raw_bytes, filename, mime_type="application/octet-stream"):
+        """Sube un archivo multimedia a Meta Graph API y retorna su media_id (o False si falla)."""
+        self.ensure_one()
+        token = self.sudo().token
+        if not token or not self.phone_number_id or not raw_bytes:
+            return False
+        url = f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}/media"
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            res = requests.post(
+                url,
+                headers=headers,
+                data={"messaging_product": "whatsapp"},
+                files={"file": (filename or "archivo", raw_bytes, mime_type or "application/octet-stream")},
+                timeout=20,
+            )
+            data = res.json() if res.content else {}
+            if res.status_code in (200, 201) and data.get("id"):
+                return data["id"]
+            _logger.warning("Fallo al subir media a Meta (%s): %s", res.status_code, data)
+            return False
+        except Exception as e:
+            _logger.error("Excepción al subir media a Meta: %s", e)
+            return False
+
+    def send_media_to_phone(self, phone, media_id, media_type="document", filename=None, caption=None):
+        """Envía un archivo multimedia ya subido (media_id) a un teléfono dentro de la ventana de 24h."""
+        self.ensure_one()
+        clean_phone = self.clean_phone_number(phone)
+        if not clean_phone:
+            return {"error": {"message": "Número de teléfono no válido"}}
+        if self.env["whatsapp.blocklist"].sudo().is_number_blocked(clean_phone):
+            return {"error": {"message": "El número está en la lista negra (opt-out)"}}
+
+        wa_type = media_type if media_type in ("image", "document", "audio", "video") else "document"
+        media_obj = {"id": media_id}
+        if wa_type == "document" and filename:
+            media_obj["filename"] = filename
+        if caption and wa_type in ("image", "document", "video"):
+            media_obj["caption"] = caption
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_phone,
+            "type": wa_type,
+            wa_type: media_obj,
+        }
+        msg_vals = {
+            "wa_account_id": self.id,
+            "mobile_number": clean_phone,
+            "body": caption or f"[{wa_type.upper()}: {filename or media_id}]",
+            "msg_type": "outbound",
+            "state": "outgoing",
+            "media_id": media_id,
+            "media_type": wa_type,
+            "cost_usd": 0.0,
+        }
+        try:
+            status_code, data = self.send_meta_raw(payload)
+        except Exception as e:
+            msg_vals.update({"state": "error", "error_msg": str(e)})
+            self.env["whatsapp.message"].sudo().create(msg_vals)
+            return {"error": {"message": str(e)}}
+
+        if status_code in (200, 201):
+            messages = data.get("messages", [])
+            wamid = messages[0].get("id") if messages else False
+            msg_vals.update({"state": "sent", "msg_uid": wamid})
+            msg = self.env["whatsapp.message"].sudo().create(msg_vals)
+            return {"success": True, "wamid": wamid, "message_id": msg.id}
+        err_data = data.get("error", {})
+        err_msg = err_data.get("message", str(data))
+        err_code = str(err_data.get("code") or "")
+        Msg = self.env["whatsapp.message"].sudo()
+        msg_vals.update({
+            "state": Msg._classify_meta_error_state(err_data),
+            "error_code": err_code or False,
+            "error_msg": f"HTTP {status_code}: {err_msg}",
+        })
+        Msg.create(msg_vals)
+        return {"error": err_data or {"message": err_msg}}
+
     def send_text_to_phone(self, phone, text):
         """Envía un mensaje de texto libre a través de Meta Graph API (ventana de 24h)."""
         self.ensure_one()
@@ -357,15 +538,10 @@ class WhatsappAccount(models.Model):
             return {"error": {"message": "Número de teléfono no válido"}}
 
         # Validar si está en lista negra
-        if self.env["whatsapp.blocklist"].sudo().search([("mobile_number", "=", clean_phone)], limit=1):
+        if self.env["whatsapp.blocklist"].sudo().is_number_blocked(clean_phone):
             _logger.info("WhatsApp abortado: el número %s está en la lista negra.", clean_phone)
             return {"error": {"message": "El número está en la lista negra (opt-out)"}}
 
-        url = f"https://graph.facebook.com/{self.api_version}/{self.phone_number_id}/messages"
-        headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json",
-        }
         payload = {
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
@@ -384,9 +560,7 @@ class WhatsappAccount(models.Model):
         }
 
         try:
-            res = requests.post(url, headers=headers, json=payload, timeout=15)
-            data = res.json() if res.content else {}
-            status_code = res.status_code
+            status_code, data = self.send_meta_raw(payload)
         except Exception as e:
             _logger.error("Error al conectar con Meta Graph API: %s", e)
             msg_vals.update({"state": "error", "error_msg": str(e)})
@@ -403,8 +577,14 @@ class WhatsappAccount(models.Model):
         else:
             err_data = data.get("error", {})
             err_msg = err_data.get("message", str(data))
-            msg_vals.update({"state": "error", "error_msg": f"HTTP {status_code}: {err_msg}"})
-            self.env["whatsapp.message"].sudo().create(msg_vals)
+            err_code = str(err_data.get("code") or "")
+            Msg = self.env["whatsapp.message"].sudo()
+            msg_vals.update({
+                "state": Msg._classify_meta_error_state(err_data),
+                "error_code": err_code or False,
+                "error_msg": f"HTTP {status_code}: {err_msg}",
+            })
+            Msg.create(msg_vals)
             _logger.warning("Fallo al enviar texto libre a %s: %s", clean_phone, err_msg)
             return {"error": err_data or {"message": err_msg}}
 
@@ -414,12 +594,13 @@ class WhatsappAccount(models.Model):
         Retorna (raw_bytes, mime_type) o (None, None) en caso de fallo.
         """
         self.ensure_one()
-        if not self.token or not media_id:
+        token = self.sudo().token
+        if not token or not media_id:
             return None, None
         try:
             api_version = self.api_version or "v21.0"
             meta_url = f"https://graph.facebook.com/{api_version}/{media_id}"
-            headers = {"Authorization": f"Bearer {self.token}"}
+            headers = {"Authorization": f"Bearer {token}"}
             res = requests.get(meta_url, headers=headers, timeout=15)
             if res.status_code != 200:
                 _logger.error("Error al consultar media_id %s en Meta: %s", media_id, res.text)
@@ -432,7 +613,7 @@ class WhatsappAccount(models.Model):
                 return None, None
 
             cdn_headers = {
-                "Authorization": f"Bearer {self.token}",
+                "Authorization": f"Bearer {token}",
                 "User-Agent": "curl/7.68.0",
             }
             file_res = requests.get(download_url, headers=cdn_headers, timeout=30)
