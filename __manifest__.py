@@ -1,7 +1,7 @@
 # License LGPL-3.0 or later (https://www.gnu.org/licenses/lgpl).
 {
-    "name": "MBA - WhatsApp Meta Cloud API",
-    "version": "19.0.1.3.4",
+    "name": "MBA - WhatsApp Meta Cloud API (MBA Consultings)",
+    "version": "19.0.1.3.5",
     "category": "Discuss",
     "summary": "Integración oficial con Meta WhatsApp Cloud API para Odoo Community (Cuentas, Plantillas y Mensajes)",
     "author": "MBA Consultings, Brooks Gonzalez",
