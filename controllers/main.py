@@ -241,11 +241,22 @@ class WhatsAppWebhookController(http.Controller):
                         if raw_bytes:
                             fname = media_dict.get("filename")
                             if not fname:
-                                ext = "jpg" if "jpeg" in (mime_type or "") or "jpg" in (mime_type or "") else (
-                                    "png" if "png" in (mime_type or "") else (
-                                        "pdf" if "pdf" in (mime_type or "") else "bin"
-                                    )
-                                )
+                                base_mime = (mime_type or "").split(";")[0].strip().lower()
+                                mime_ext_map = {
+                                    "image/jpeg": "jpg",
+                                    "image/jpg": "jpg",
+                                    "image/png": "png",
+                                    "image/webp": "webp",
+                                    "application/pdf": "pdf",
+                                    "audio/ogg": "ogg",
+                                    "audio/mpeg": "mp3",
+                                    "audio/mp4": "m4a",
+                                    "audio/aac": "aac",
+                                    "audio/amr": "amr",
+                                    "audio/wav": "wav",
+                                    "video/mp4": "mp4",
+                                }
+                                ext = mime_ext_map.get(base_mime, "bin")
                                 fname = f"whatsapp_{msg_type}_{msg_uid[-6:]}.{ext}"
                             post_attachments.append((fname, raw_bytes))
                         else:
@@ -319,6 +330,14 @@ class WhatsAppWebhookController(http.Controller):
                                 wa_msg._post_webhook_attachment_hook(posted_msg, text_body)
                             except Exception as ex_hook:
                                 _logger.warning("Error ejecutando _post_webhook_attachment_hook: %s", ex_hook)
+
+                        if msg_type == "audio" and posted_msg.attachment_ids and "discuss.voice.metadata" in request.env:
+                            try:
+                                request.env["discuss.voice.metadata"].sudo().create({
+                                    "attachment_id": posted_msg.attachment_ids[0].id,
+                                })
+                            except Exception as ex_voice:
+                                _logger.warning("No se pudo crear discuss.voice.metadata: %s", ex_voice)
 
                         _logger.info("Mensaje entrante de WhatsApp publicado en Discuss (Canal %s, Partner %s, Adjuntos: %s)", channel.id, partner.name, len(posted_msg.attachment_ids))
                     except Exception as ex:
